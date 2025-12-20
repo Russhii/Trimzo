@@ -1,0 +1,195 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'home_page.dart';
+import 'signup_page.dart';
+import 'login_page.dart';
+import 'forgot_password_page.dart';
+
+class SignInPage extends StatefulWidget {
+  const SignInPage({super.key});
+  @override
+  State<SignInPage> createState() => _SignInPageState();
+}
+
+class _SignInPageState extends State<SignInPage> {
+  final _emailCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
+  bool _rememberMe = false;
+
+  Future<void> _login() async {
+    if (_emailCtrl.text.isEmpty || _passCtrl.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please fill all fields")),
+      );
+      return;
+    }
+
+    try {
+      final response = await Supabase.instance.client.auth.signInWithPassword(
+        email: _emailCtrl.text.trim(),
+        password: _passCtrl.text,
+      );
+
+// Auto-create profile if missing (safe upsert)
+      if (response.user != null) {
+        await Supabase.instance.client
+            .from('profiles')
+            .upsert({
+          'id': response.user!.id,
+          'email': response.user!.email,
+        }, onConflict: 'id');
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Login failed: ${e.toString()}")),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D0D0D),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 20),
+              IconButton(
+                onPressed: () {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(builder: (_) => const LoginPage()),
+                  );
+                },
+                icon: const Icon(Icons.arrow_back_ios, color: Colors.white70),
+              ),
+
+              const SizedBox(height: 20),
+              Text("Login to your\nAccount", style: GoogleFonts.poppins(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.white)),
+
+              const Spacer(flex: 2),
+
+              _InputField(controller: _emailCtrl, hint: "Email", icon: Icons.mail_outline_rounded),
+              const SizedBox(height: 20),
+              _InputField(controller: _passCtrl, hint: "Password", icon: Icons.lock_outline_rounded, isPassword: true),
+
+              const SizedBox(height: 16),
+              Row(children: [
+                Checkbox(value: _rememberMe, activeColor: Colors.orange, onChanged: (v) => setState(() => _rememberMe = v!)),
+                Text("Remember me", style: GoogleFonts.poppins(color: Colors.white)),
+              ]),
+
+              const SizedBox(height: 30),
+              SizedBox(
+                width: double.infinity,
+                height: 60,
+                child: ElevatedButton(
+                  onPressed: _login,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF6B00),
+                    elevation: 20,
+                    shadowColor: const Color(0xFFFF6B00).withOpacity(0.7),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                  ),
+                  child: Text("Sign in", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600)),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+              Center(
+                child: GestureDetector(
+                  onTap: () {
+                    // This opens your beautiful ForgotPasswordPage
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
+                    );
+                  },
+                  child: Text(
+                    "Forgot the password?",
+                    style: GoogleFonts.poppins(
+                      color: const Color(0xFFFF6B00),
+                      fontWeight: FontWeight.w600,
+                      fontSize: 15,
+                      decoration: TextDecoration.underline,
+                      decorationColor: const Color(0xFFFF6B00),
+                    ),
+                  ),
+                ),
+              ),
+              const Spacer(),
+              const Center(child: Text("or continue with", style: TextStyle(color: Colors.grey))),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _SocialIcon('https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/facebook.svg', color: const Color(0xFF1877F2)),
+                  const SizedBox(width: 30),
+                  _SocialIcon('https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/google.svg'),
+                ],
+              ),
+
+              const SizedBox(height: 30),
+              Center(
+                child: GestureDetector(
+                  onTap: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const SignUpPage())),
+                  child: Text.rich(TextSpan(
+                    text: "Don't have an account? ",
+                    style: const TextStyle(color: Colors.grey),
+                    children: [TextSpan(text: "Sign up", style: GoogleFonts.poppins(color: const Color(0xFFFF6B00), fontWeight: FontWeight.bold))],
+                  )),
+                ),
+              ),
+              const SizedBox(height: 40),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Reuse same _InputField and _SocialIcon
+class _InputField extends StatelessWidget {
+  final TextEditingController controller;
+  final String hint;
+  final IconData icon;
+  final bool isPassword;
+  const _InputField({required this.controller, required this.hint, required this.icon, this.isPassword = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      obscureText: isPassword,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        prefixIcon: Icon(icon, color: Colors.white54),
+        hintText: hint,
+        hintStyle: const TextStyle(color: Colors.white38),
+        filled: true,
+        fillColor: Colors.white.withOpacity(0.08),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+      ),
+    );
+  }
+}
+
+class _SocialIcon extends StatelessWidget {
+  final String url;
+  final Color? color;
+  const _SocialIcon(this.url, {this.color});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(16)),
+      child: SvgPicture.network(url, height: 32, width: 32, colorFilter: color != null ? ColorFilter.mode(color!, BlendMode.srcIn) : null),
+    );
+  }
+}
