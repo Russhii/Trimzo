@@ -61,13 +61,6 @@ class LoginPage extends StatelessWidget {
                 text: 'Continue with Google',
                 onTap: () async {
                   await Supabase.instance.client.auth.signInWithOAuth(OAuthProvider.google);
-
-                  // After login → go directly to Fill Profile Page
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (_) => const FillProfilePage()),
-                        (route) => false,
-                  );
                 },
 
               ),

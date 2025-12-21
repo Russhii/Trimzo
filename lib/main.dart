@@ -62,7 +62,7 @@ class AuthWrapper extends StatelessWidget {
 
         final user = snapshot.data?.session?.user;
 
-        if (user == null) {
+        if (user == null || user.email == null || user.email!.isEmpty) {
           return const LoginPage();
         }
 

@@ -5,8 +5,10 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:intl_phone_field/intl_phone_field.dart';
 import 'home_page.dart';
 import 'login_page.dart';
+import 'barber_shop_details_page.dart';
 
 class FillProfilePage extends StatefulWidget {
   const FillProfilePage({super.key});
@@ -19,7 +21,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
   final _fullNameCtrl = TextEditingController();
   final _usernameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
+  String? _fullPhoneNumber;
 
   DateTime? _selectedDate;
   String _gender = 'Male';
@@ -84,25 +86,37 @@ class _FillProfilePageState extends State<FillProfilePage> {
         'full_name': _fullNameCtrl.text.trim(),
         'username': _usernameCtrl.text.trim(),
         'birthday': _selectedDate?.toIso8601String(),
-        'phone': _phoneCtrl.text.trim().isEmpty ? null : _phoneCtrl.text.trim(),
+        'phone': _fullPhoneNumber,
         'gender': _gender,
         'user_type': _userType,
-        'updated_at': DateTime.now().toUtc().toIso8601String(), // Must match column name exactly
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Profile saved!")),
       );
 
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (_) => const HomePage()),
-            (route) => false,
-      );
+      if (!mounted) return;
+
+      if (_userType == 'Barber') {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const BarberShopDetailsPage()),
+              (route) => false,
+        );
+      } else {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const HomePage()),
+              (route) => false,
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error: $e")),
-      );
+      if(mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e")),
+        );
+      }
     }
   }
   @override
@@ -187,7 +201,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
             _buildTextField(_emailCtrl, "Email", enabled: false),
             const SizedBox(height: 16),
 
-            // Phone Number (FIXED & BEAUTIFUL)
+            // Phone Number
             _buildPhoneField(),
             const SizedBox(height: 16),
 
@@ -281,96 +295,28 @@ class _FillProfilePageState extends State<FillProfilePage> {
     );
   }
 
-  // PHONE FIELD — FULLY FIXED & TYPING WORKS PERFECTLY
-  String _selectedCountryCode = '+91';
-  String _selectedFlag = 'assets/flags/in.png';
-
   Widget _buildPhoneField() {
-    return TextField(
-      controller: _phoneCtrl,
-      keyboardType: TextInputType.phone,
-      style: const TextStyle(color: Colors.white, fontSize: 16),
+    return IntlPhoneField(
+      style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
-        hintText: "Phone Number",
-        hintStyle: const TextStyle(color: Colors.white38),
-        prefix: Padding(
-          padding: const EdgeInsets.only(left: 16, right: 12),
-          child: GestureDetector(
-            onTap: _showCountryDialog,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Image.asset(
-                  _selectedFlag,
-                  width: 32,
-                  height: 20,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const Icon(Icons.flag, color: Colors.orange, size: 24),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  _selectedCountryCode,
-                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
-                ),
-                const Icon(Icons.arrow_drop_down, color: Colors.white70),
-              ],
-            ),
-          ),
-        ),
+        labelText: 'Phone Number',
+        labelStyle: const TextStyle(color: Colors.white38),
         filled: true,
         fillColor: Colors.white.withOpacity(0.08),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide.none,
         ),
-        contentPadding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
       ),
+      initialCountryCode: 'IN',
+      onChanged: (phone) {
+        _fullPhoneNumber = phone.completeNumber;
+      },
+      dropdownTextStyle: const TextStyle(color: Colors.white),
+      dropdownIcon: const Icon(Icons.arrow_drop_down, color: Colors.white),
     );
   }
 
-// COUNTRY PICKER DIALOG
-  void _showCountryDialog() {
-    final countries = {
-      '+91': 'assets/flags/in.png',
-      '+1': 'assets/flags/us.png',
-      '+44': 'assets/flags/gb.png',
-      '+61': 'assets/flags/au.png',
-      '+81': 'assets/flags/jp.png',
-      '+49': 'assets/flags/de.png',
-      '+33': 'assets/flags/fr.png',
-      '+971': 'assets/flags/ae.png',
-    };
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
-        title: Text("Select Country", style: GoogleFonts.poppins(color: Colors.white)),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: countries.length,
-            itemBuilder: (context, index) {
-              String code = countries.keys.elementAt(index);
-              String flag = countries[code]!;
-              return ListTile(
-                leading: Image.asset(flag, width: 32, height: 20),
-                title: Text(code, style: const TextStyle(color: Colors.white)),
-                onTap: () {
-                  setState(() {
-                    _selectedCountryCode = code;
-                    _selectedFlag = flag;
-                  });
-                  Navigator.pop(ctx);
-                },
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
 
   // Gender Dropdown
   Widget _buildGenderDropdown() {
@@ -423,7 +369,6 @@ class _FillProfilePageState extends State<FillProfilePage> {
     _fullNameCtrl.dispose();
     _usernameCtrl.dispose();
     _emailCtrl.dispose();
-    _phoneCtrl.dispose();
     super.dispose();
   }
 }

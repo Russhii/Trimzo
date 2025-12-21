@@ -128,9 +128,16 @@ class _SignInPageState extends State<SignInPage> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  _SocialIcon('https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/facebook.svg', color: const Color(0xFF1877F2)),
+                  _SocialIcon(
+                    'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/facebook.svg',
+                    color: const Color(0xFF1877F2),
+                    onTap: () => Supabase.instance.client.auth.signInWithOAuth(OAuthProvider.facebook),
+                  ),
                   const SizedBox(width: 30),
-                  _SocialIcon('https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/google.svg'),
+                  _SocialIcon(
+                    'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/google.svg',
+                    onTap: () => Supabase.instance.client.auth.signInWithOAuth(OAuthProvider.google),
+                  ),
                 ],
               ),
 
@@ -154,7 +161,7 @@ class _SignInPageState extends State<SignInPage> {
   }
 }
 
-// Reuse same _InputField and _SocialIcon
+// Reuse same _InputField
 class _InputField extends StatelessWidget {
   final TextEditingController controller;
   final String hint;
@@ -180,16 +187,23 @@ class _InputField extends StatelessWidget {
   }
 }
 
+// Add onTap to _SocialIcon
 class _SocialIcon extends StatelessWidget {
   final String url;
   final Color? color;
-  const _SocialIcon(this.url, {this.color});
+  final VoidCallback onTap;
+
+  const _SocialIcon(this.url, {this.color, required this.onTap});
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(16)),
-      child: SvgPicture.network(url, height: 32, width: 32, colorFilter: color != null ? ColorFilter.mode(color!, BlendMode.srcIn) : null),
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(16)),
+        child: SvgPicture.network(url, height: 32, width: 32, colorFilter: color != null ? ColorFilter.mode(color!, BlendMode.srcIn) : null),
+      ),
     );
   }
 }
