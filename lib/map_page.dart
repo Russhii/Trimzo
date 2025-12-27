@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
+import 'package:geolocator/geolocator.dart'; // NEW
 
 class MapPickerPage extends StatefulWidget {
   const MapPickerPage({super.key});
@@ -16,45 +17,72 @@ class _MapPickerPageState extends State<MapPickerPage> {
   final MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
 
-  // Default Location: Pune, India
+  // Default Location (will be overwritten by GPS)
   LatLng _center = const LatLng(18.5204, 73.8567);
   String _address = "Fetching location...";
   bool _isMoving = false;
+  bool _isLoadingGPS = false;
   List<dynamic> _searchResults = [];
   Timer? _debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    _getCurrentLocation(); // Auto-fetch user's real location on start
+  }
 
   @override
   void dispose() {
     _searchController.dispose();
     _debounce?.cancel();
+    _mapController.dispose();
     super.dispose();
   }
 
-  // 1. FREE SEARCH (Nominatim)
-  Future<void> _searchPlaces(String query) async {
-    if (query.isEmpty) {
-      if (mounted) setState(() => _searchResults = []);
+  // --- 1. GET ACCURATE GPS LOCATION ---
+  Future<void> _getCurrentLocation() async {
+    setState(() => _isLoadingGPS = true);
+
+    // Check services and permissions
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) setState(() => _isLoadingGPS = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Location services are disabled.')));
       return;
     }
 
-    final url = Uri.parse(
-        'https://nominatim.openstreetmap.org/search?q=$query&format=json&limit=5&addressdetails=1');
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        if (mounted) setState(() => _isLoadingGPS = false);
+        return;
+      }
+    }
 
+    // Get precise position
     try {
-      final response = await http.get(url, headers: {'User-Agent': 'com.example.barberapp'});
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high, // High accuracy mode
+      );
 
-      if (response.statusCode == 200 && mounted) {
-        setState(() => _searchResults = json.decode(response.body));
+      if (mounted) {
+        setState(() => _isLoadingGPS = false);
+        _moveToLocation(position.latitude, position.longitude);
       }
     } catch (e) {
-      debugPrint("Search error: $e");
+      debugPrint("GPS Error: $e");
+      if (mounted) setState(() => _isLoadingGPS = false);
     }
   }
 
-  // 2. MOVE MAP TO SEARCH RESULT
+  // --- 2. MOVE MAP & UPDATE ADDRESS ---
   void _moveToLocation(double lat, double lng) {
-    _mapController.move(LatLng(lat, lng), 16.0);
+    _center = LatLng(lat, lng); // Update internal state
+    _mapController.move(_center, 17.0); // Higher zoom (17) is more accurate
+    _getAddress(lat, lng);
 
+    // Clear search results
     if (mounted) {
       setState(() {
         _searchResults = [];
@@ -64,30 +92,40 @@ class _MapPickerPageState extends State<MapPickerPage> {
     }
   }
 
-  // 3. GET ADDRESS (Reverse Geocoding)
+  // --- 3. REVERSE GEOCODING (Get Address) ---
   Future<void> _getAddress(double lat, double lng) async {
+    setState(() => _address = "Fetching precise address...");
+
+    // zoom=18 gives the most detailed address (house numbers)
     final url = Uri.parse(
         'https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lng&zoom=18&addressdetails=1');
 
     try {
-      final response = await http.get(url, headers: {'User-Agent': 'com.example.barberapp'});
+      final response = await http.get(url, headers: {'User-Agent': 'com.example.app'});
+
       if (response.statusCode == 200 && mounted) {
         final data = json.decode(response.body);
         final addr = data['address'];
-        String cleanAddr = data['display_name'] ?? "Unknown Location";
 
         if (addr != null) {
-          // Create a shorter, cleaner address string
-          cleanAddr = [
-            addr['road'],
-            addr['suburb'],
-            addr['city'],
-            addr['postcode']
-          ].where((s) => s != null && s.isNotEmpty).toSet().join(', ');
-        }
+          // Construct a precise address manually
+          // We prioritize House Number and Road
+          List<String> parts = [];
 
-        if (mounted) {
-          setState(() => _address = cleanAddr.isEmpty ? "Unknown Location" : cleanAddr);
+          if (addr['house_number'] != null) parts.add(addr['house_number']);
+          if (addr['road'] != null) parts.add(addr['road']);
+          if (addr['suburb'] != null) parts.add(addr['suburb']);
+          if (addr['city'] != null) parts.add(addr['city']);
+          if (addr['postcode'] != null) parts.add(addr['postcode']);
+
+          // If parts are empty, fall back to display_name
+          String preciseAddress = parts.isNotEmpty
+              ? parts.join(', ')
+              : data['display_name'] ?? "Unknown Location";
+
+          setState(() => _address = preciseAddress);
+        } else {
+          setState(() => _address = data['display_name'] ?? "Unknown Location");
         }
       }
     } catch (e) {
@@ -95,30 +133,37 @@ class _MapPickerPageState extends State<MapPickerPage> {
     }
   }
 
-  // MAP EVENT: When drag stops
-  void _onMapPositionChanged(MapPosition position, bool hasGesture) {
+  // --- 4. SEARCH FUNCTION ---
+  Future<void> _searchPlaces(String query) async {
+    if (query.isEmpty) {
+      if (mounted) setState(() => _searchResults = []);
+      return;
+    }
+    final url = Uri.parse(
+        'https://nominatim.openstreetmap.org/search?q=$query&format=json&limit=5&addressdetails=1');
+    try {
+      final response = await http.get(url, headers: {'User-Agent': 'com.example.app'});
+      if (response.statusCode == 200 && mounted) {
+        setState(() => _searchResults = json.decode(response.body));
+      }
+    } catch (e) { debugPrint(e.toString()); }
+  }
+
+  void _onMapPositionChanged(MapCamera camera, bool hasGesture) {
     if (hasGesture) {
       setState(() {
         _isMoving = true;
         _address = "Locating...";
       });
-
-      if (_debounce?.isActive ?? false) _debounce!.cancel();
-      _debounce = Timer(const Duration(milliseconds: 800), () {
-        if (mounted && position.center != null) {
+      _debounce?.cancel();
+      _debounce = Timer(const Duration(milliseconds: 1000), () {
+        if (mounted) {
           setState(() => _isMoving = false);
-          _center = position.center!;
+          _center = camera.center;
           _getAddress(_center.latitude, _center.longitude);
         }
       });
     }
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    // Initial fetch
-    _getAddress(_center.latitude, _center.longitude);
   }
 
   @override
@@ -127,28 +172,27 @@ class _MapPickerPageState extends State<MapPickerPage> {
       resizeToAvoidBottomInset: false,
       body: Stack(
         children: [
-          // --- FREE OPENSTREETMAP ---
+          // MAP LAYER
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              center: _center,
-              zoom: 15.0,
+              initialCenter: _center,
+              initialZoom: 17.0, // High zoom for accuracy
               onPositionChanged: _onMapPositionChanged,
               interactionOptions: const InteractionOptions(
-                flags: InteractiveFlag.all & ~InteractiveFlag.rotate, // Keep map straight
+                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
               ),
             ),
             children: [
-              // Stylish Dark Mode Tiles (Free)
               TileLayer(
-                urlTemplate: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+                urlTemplate: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', // 'Voyager' is clearer than 'Dark' for addresses
                 subdomains: const ['a', 'b', 'c'],
-                userAgentPackageName: 'com.example.barberapp',
+                userAgentPackageName: 'com.example.app',
               ),
             ],
           ),
 
-          // --- CENTER PIN ---
+          // CENTER PIN (Fixed)
           Center(
             child: Padding(
               padding: const EdgeInsets.only(bottom: 40),
@@ -157,71 +201,79 @@ class _MapPickerPageState extends State<MapPickerPage> {
                 children: [
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(10)),
-                    child: Text(_isMoving ? "Locating..." : "Pick Here",
+                    decoration: BoxDecoration(
+                        color: Colors.black,
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4)]
+                    ),
+                    child: Text(_isMoving ? "..." : "Exact Spot",
                         style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
                   ),
                   const SizedBox(height: 5),
-                  const Icon(Icons.location_on, size: 50, color: Colors.orange),
+                  const Icon(Icons.location_on, size: 50, color: Colors.redAccent),
                 ],
               ),
             ),
           ),
 
-          // --- SEARCH BAR ---
+          // MY LOCATION BUTTON (Bottom Right)
           Positioned(
-            top: 60, left: 20, right: 20,
+            bottom: 220, right: 20,
+            child: FloatingActionButton(
+              backgroundColor: Colors.white,
+              onPressed: _isLoadingGPS ? null : _getCurrentLocation,
+              child: _isLoadingGPS
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.my_location, color: Colors.black),
+            ),
+          ),
+
+          // SEARCH BAR (Top)
+          Positioned(
+            top: 50, left: 20, right: 20,
             child: Column(
               children: [
-                Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E1E1E),
-                    borderRadius: BorderRadius.circular(15),
-                    boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 10)],
-                  ),
+                Card(
+                  elevation: 5,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                   child: TextField(
                     controller: _searchController,
-                    style: const TextStyle(color: Colors.white),
-                    onChanged: (val) {
-                      _debounce?.cancel();
-                      _debounce = Timer(const Duration(milliseconds: 800), () => _searchPlaces(val));
-                    },
                     decoration: InputDecoration(
-                      hintText: "Search location...",
-                      hintStyle: const TextStyle(color: Colors.white38),
-                      prefixIcon: const Icon(Icons.search, color: Colors.orange),
+                      hintText: "Search precise location...",
+                      prefixIcon: const Icon(Icons.search),
                       suffixIcon: _searchController.text.isNotEmpty
-                          ? IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () {
+                          ? IconButton(icon: const Icon(Icons.close), onPressed: () {
                         _searchController.clear();
-                        if (mounted) setState(() => _searchResults = []);
-                      })
-                          : null,
+                        setState(() => _searchResults = []);
+                      }) : null,
                       border: InputBorder.none,
                       contentPadding: const EdgeInsets.all(15),
                     ),
+                    onChanged: (val) {
+                      _debounce?.cancel();
+                      _debounce = Timer(const Duration(milliseconds: 500), () => _searchPlaces(val));
+                    },
                   ),
                 ),
                 if (_searchResults.isNotEmpty)
                   Container(
                     margin: const EdgeInsets.only(top: 5),
-                    decoration: BoxDecoration(color: const Color(0xFF1E1E1E), borderRadius: BorderRadius.circular(15)),
+                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15)),
                     constraints: const BoxConstraints(maxHeight: 200),
                     child: ListView.separated(
                       padding: EdgeInsets.zero,
                       shrinkWrap: true,
                       itemCount: _searchResults.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1, color: Colors.white10),
+                      separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (ctx, i) {
                         final place = _searchResults[i];
                         return ListTile(
-                          title: Text(place['display_name']?.split(',')[0] ?? 'Unknown', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                          subtitle: Text(place['display_name'] ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                          title: Text(place['display_name'].split(',')[0], style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Text(place['display_name'], maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
                           onTap: () {
-                            final lat = double.tryParse(place['lat']?.toString() ?? '');
-                            final lon = double.tryParse(place['lon']?.toString() ?? '');
-                            if (lat != null && lon != null) {
-                              _moveToLocation(lat, lon);
-                            }
+                            final lat = double.tryParse(place['lat']);
+                            final lon = double.tryParse(place['lon']);
+                            if (lat != null && lon != null) _moveToLocation(lat, lon);
                           },
                         );
                       },
@@ -231,23 +283,23 @@ class _MapPickerPageState extends State<MapPickerPage> {
             ),
           ),
 
-          // --- BOTTOM CONFIRM SHEET ---
+          // BOTTOM SHEET (Address Display)
           Positioned(
             bottom: 0, left: 0, right: 0,
             child: Container(
-              padding: const EdgeInsets.all(25),
+              padding: const EdgeInsets.all(20),
               decoration: const BoxDecoration(
-                color: Color(0xFF1A1A1A),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                  boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, -5))]
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text("Selected Location", style: TextStyle(color: Colors.orange, fontSize: 12)),
-                  const SizedBox(height: 10),
-                  Text(_address, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold), maxLines: 2),
-                  const SizedBox(height: 20),
+                  const Text("Selected Location", style: TextStyle(color: Colors.grey, fontSize: 12)),
+                  const SizedBox(height: 8),
+                  Text(_address, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold), maxLines: 2),
+                  const SizedBox(height: 15),
                   ElevatedButton(
                     onPressed: _isMoving ? null : () {
                       Navigator.pop(context, {
@@ -257,11 +309,11 @@ class _MapPickerPageState extends State<MapPickerPage> {
                       });
                     },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orange,
+                      backgroundColor: Colors.black,
                       minimumSize: const Size.fromHeight(50),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: const Text("Confirm Location", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                    child: const Text("CONFIRM LOCATION", style: TextStyle(color: Colors.white)),
                   )
                 ],
               ),
