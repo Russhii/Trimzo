@@ -12,7 +12,7 @@ class LoginPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D0D0D),
+      backgroundColor: Colors.white,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -38,7 +38,7 @@ class LoginPage extends StatelessWidget {
                 style: GoogleFonts.poppins(
                   fontSize: 48,
                   fontWeight: FontWeight.bold,
-                  color: Colors.white,
+                  color: Colors.black,
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -131,7 +131,7 @@ class _SocialButton extends StatelessWidget {
       child: OutlinedButton(
         onPressed: onTap,
         style: OutlinedButton.styleFrom(
-          side: const BorderSide(color: Colors.white24, width: 1.5),
+          side: const BorderSide(color: Colors.black26, width: 1.5),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
         ),
         child: Row(
@@ -139,7 +139,7 @@ class _SocialButton extends StatelessWidget {
           children: [
             SvgPicture.network(icon, height: 28, width: 28, colorFilter: color != null ? ColorFilter.mode(color!, BlendMode.srcIn) : null),
             const SizedBox(width: 16),
-            Text(text, style: GoogleFonts.poppins(fontSize: 17, color: Colors.white)),
+            Text(text, style: GoogleFonts.poppins(fontSize: 17, color: Colors.black)),
           ],
         ),
       ),

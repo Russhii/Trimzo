@@ -54,7 +54,7 @@ class _SignUpPageState extends State<SignUpPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D0D0D),
+      backgroundColor: Colors.white,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -70,7 +70,7 @@ class _SignUpPageState extends State<SignUpPage> {
                     MaterialPageRoute(builder: (_) => const LoginPage()),
                   );
                 },
-                icon: const Icon(Icons.arrow_back_ios, color: Colors.white70),
+                icon: const Icon(Icons.arrow_back_ios, color: Colors.black),
               ),
 
               const SizedBox(height: 20),
@@ -80,7 +80,7 @@ class _SignUpPageState extends State<SignUpPage> {
                 style: GoogleFonts.poppins(
                   fontSize: 40,
                   fontWeight: FontWeight.bold,
-                  color: Colors.white,
+                  color: Colors.black,
                 ),
               ),
 
@@ -98,7 +98,7 @@ class _SignUpPageState extends State<SignUpPage> {
                     activeColor: Colors.orange,
                     onChanged: (v) => setState(() => _rememberMe = v!),
                   ),
-                  Text("Remember me", style: GoogleFonts.poppins(color: Colors.white)),
+                  Text("Remember me", style: GoogleFonts.poppins(color: Colors.black)),
                 ],
               ),
 
@@ -116,7 +116,7 @@ class _SignUpPageState extends State<SignUpPage> {
                   ),
                   child: Text(
                     "Sign up",
-                    style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600),
+                    style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white),
                   ),
                 ),
               ),
@@ -160,7 +160,7 @@ class _SignUpPageState extends State<SignUpPage> {
   }
 }
 
-// Reusable widgets (same as before)
+// Reusable widgets
 class _InputField extends StatelessWidget {
   final TextEditingController controller;
   final String hint;
@@ -173,13 +173,13 @@ class _InputField extends StatelessWidget {
     return TextField(
       controller: controller,
       obscureText: isPassword,
-      style: const TextStyle(color: Colors.white),
+      style: const TextStyle(color: Colors.black),
       decoration: InputDecoration(
-        prefixIcon: Icon(icon, color: Colors.white54),
+        prefixIcon: Icon(icon, color: Colors.black54),
         hintText: hint,
-        hintStyle: const TextStyle(color: Colors.white38),
+        hintStyle: const TextStyle(color: Colors.black38),
         filled: true,
-        fillColor: Colors.white.withOpacity(0.08),
+        fillColor: Colors.black.withOpacity(0.08),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
       ),
     );
@@ -195,7 +195,7 @@ class _SocialIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(16)),
+      decoration: BoxDecoration(color: Colors.black.withOpacity(0.08), borderRadius: BorderRadius.circular(16)),
       child: SvgPicture.network(url, height: 32, width: 32, colorFilter: color != null ? ColorFilter.mode(color!, BlendMode.srcIn) : null),
     );
   }

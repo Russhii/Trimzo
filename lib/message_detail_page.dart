@@ -21,17 +21,17 @@ class MessageDetailPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D0D0D),
+      backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios, color: Colors.white70),
+          icon: const Icon(Icons.arrow_back_ios, color: Colors.black),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
           "Message",
-          style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
+          style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black),
         ),
       ),
       body: Padding(
@@ -47,7 +47,7 @@ class MessageDetailPage extends StatelessWidget {
                   backgroundColor: Colors.orange.withOpacity(0.2),
                   child: Icon(
                     isRead ? Icons.check_circle : Icons.notifications_active,
-                    color: isRead ? Colors.white70 : Colors.orange,
+                    color: isRead ? Colors.grey : Colors.orange,
                     size: 32,
                   ),
                 ),
@@ -58,18 +58,18 @@ class MessageDetailPage extends StatelessWidget {
                     children: [
                       Text(
                         title,
-                        style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                        style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black),
                       ),
                       Text(
                         "From: $salon",
-                        style: GoogleFonts.poppins(fontSize: 15, color: Colors.orange),
+                        style: GoogleFonts.poppins(fontSize: 15, color: Colors.orange, fontWeight: FontWeight.w600),
                       ),
                     ],
                   ),
                 ),
                 Text(
                   time,
-                  style: GoogleFonts.poppins(fontSize: 13, color: Colors.white38),
+                  style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey),
                 ),
               ],
             ),
@@ -81,13 +81,13 @@ class MessageDetailPage extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
+                color: Colors.grey[100],
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.white.withOpacity(0.1)),
+                border: Border.all(color: Colors.grey[200]!),
               ),
               child: Text(
                 message,
-                style: GoogleFonts.poppins(fontSize: 16, color: Colors.white, height: 1.6),
+                style: GoogleFonts.poppins(fontSize: 16, color: Colors.black87, height: 1.6),
               ),
             ),
 
@@ -108,7 +108,7 @@ class MessageDetailPage extends StatelessWidget {
                     backgroundColor: const Color(0xFFFF6B00),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                   ),
-                  child: Text("View Booking", style: GoogleFonts.poppins(fontSize: 18, color: Colors.white)),
+                  child: Text("View Booking", style: GoogleFonts.poppins(fontSize: 18, color: Colors.white, fontWeight: FontWeight.w600)),
                 ),
               ),
           ],

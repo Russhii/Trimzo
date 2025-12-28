@@ -1,7 +1,8 @@
 // lib/my_bookings_page.dart
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart'; // For date formatting
+import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class MyBookingsPage extends StatefulWidget {
   const MyBookingsPage({super.key});
@@ -11,7 +12,7 @@ class MyBookingsPage extends StatefulWidget {
 }
 
 class _MyBookingsPageState extends State<MyBookingsPage>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
   @override
@@ -29,23 +30,24 @@ class _MyBookingsPageState extends State<MyBookingsPage>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D0D0D),
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
+        automaticallyImplyLeading: false,
+        backgroundColor: Colors.white,
         elevation: 0,
         title: Text(
           "My Bookings",
           style: GoogleFonts.poppins(
             fontSize: 24,
             fontWeight: FontWeight.bold,
-            color: Colors.white,
+            color: Colors.black,
           ),
         ),
         bottom: TabBar(
           controller: _tabController,
           indicatorColor: Colors.orange,
           labelColor: Colors.orange,
-          unselectedLabelColor: Colors.white54,
+          unselectedLabelColor: Colors.black54,
           labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
           tabs: const [
             Tab(text: "Upcoming"),
@@ -64,109 +66,120 @@ class _MyBookingsPageState extends State<MyBookingsPage>
   }
 }
 
-class BookingList extends StatelessWidget {
+class BookingList extends StatefulWidget {
   final String statusFilter; // "upcoming" or "history"
 
   const BookingList({super.key, required this.statusFilter});
 
-  // Sample data - replace with real data from Supabase later
-  final List<Map<String, dynamic>> _bookings = const [
-    {
-      "id": 1,
-      "salon": "Belle Curls",
-      "service": "Haircut + Coloring",
-      "date": "2025-12-15",
-      "time": "10:30 AM",
-      "price": 150.00,
-      "status": "upcoming", // upcoming, completed, cancelled
-      "imageUrl": "https://images.unsplash.com/photo-1600948836101-f9ffda59d76d?w=400",
-    },
-    {
-      "id": 2,
-      "salon": "Serenity Salon",
-      "service": "Full Body Massage",
-      "date": "2025-12-20",
-      "time": "03:00 PM",
-      "price": 120.00,
-      "status": "upcoming",
-      "imageUrl": "https://images.unsplash.com/photo-1559598467-f8b76c5e1d0f?w=400",
-    },
-    {
-      "id": 3,
-      "salon": "Pretty Parlor",
-      "service": "Manicure & Pedicure",
-      "date": "2025-11-28",
-      "time": "02:00 PM",
-      "price": 85.00,
-      "status": "completed",
-      "imageUrl": "https://images.unsplash.com/photo-1517838277536-f5f99be715a5?w=400",
-    },
-    {
-      "id": 4,
-      "salon": "The Razor's Edge",
-      "service": "Beard Trim + Shave",
-      "date": "2025-11-10",
-      "time": "11:00 AM",
-      "price": 45.00,
-      "status": "cancelled",
-      "imageUrl": "https://images.unsplash.com/photo-1521590832167-8d6d5c9e59e7?w=400",
-    },
-  ];
+  @override
+  State<BookingList> createState() => _BookingListState();
+}
+
+class _BookingListState extends State<BookingList> {
+  late Future<List<Map<String, dynamic>>> _bookingsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _bookingsFuture = _fetchBookings();
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchBookings() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+
+    if (userId == null) {
+      return [];
+    }
+
+    try {
+      List<String> statuses;
+      if (widget.statusFilter == "upcoming") {
+        statuses = ['upcoming'];
+      } else {
+        statuses = ['completed', 'cancelled'];
+      }
+
+      final response = await Supabase.instance.client
+          .from('bookings')
+          .select('*, salons(name, image_url)')
+          .eq('user_id', userId)
+          .filter('status', 'in', statuses)
+          .order('booking_date', ascending: widget.statusFilter == 'upcoming');
+
+      return (response as List).cast<Map<String, dynamic>>();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error fetching bookings: $e')),
+        );
+      }
+      return [];
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final filteredBookings = _bookings.where((b) {
-      if (statusFilter == "upcoming") {
-        return b["status"] == "upcoming";
-      } else {
-        return b["status"] == "completed" || b["status"] == "cancelled";
-      }
-    }).toList();
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _bookingsFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator(color: Colors.orange));
+        }
 
-    if (filteredBookings.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              statusFilter == "upcoming"
-                  ? Icons.event_busy_outlined
-                  : Icons.history,
-              size: 80,
-              color: Colors.white38,
-            ),
-            const SizedBox(height: 20),
-            Text(
-              statusFilter == "upcoming"
-                  ? "No upcoming bookings"
-                  : "No past bookings yet",
-              style: GoogleFonts.poppins(
-                fontSize: 18,
-                color: Colors.white54,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              statusFilter == "upcoming"
-                  ? "Book your next salon visit now!"
-                  : "Your booking history will appear here",
-              style: GoogleFonts.poppins(
-                fontSize: 14,
-                color: Colors.white38,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
+        if (snapshot.hasError) {
+          return Center(child: Text('Error: ${snapshot.error}'));
+        }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(20),
-      itemCount: filteredBookings.length,
-      itemBuilder: (context, index) {
-        final booking = filteredBookings[index];
-        return BookingCard(booking: booking);
+        final bookings = snapshot.data ?? [];
+
+        if (bookings.isEmpty) {
+          return _buildEmptyState();
+        }
+
+        return RefreshIndicator(
+          color: Colors.orange,
+          onRefresh: () async {
+            setState(() {
+              _bookingsFuture = _fetchBookings();
+            });
+          },
+          child: ListView.builder(
+            padding: const EdgeInsets.all(20),
+            itemCount: bookings.length,
+            itemBuilder: (context, index) {
+              final booking = bookings[index];
+              return BookingCard(booking: booking);
+            },
+          ),
+        );
       },
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            widget.statusFilter == "upcoming"
+                ? Icons.event_busy_outlined
+                : Icons.history,
+            size: 80,
+            color: Colors.grey[300],
+          ),
+          const SizedBox(height: 20),
+          Text(
+            widget.statusFilter == "upcoming"
+                ? "No upcoming bookings"
+                : "No past bookings yet",
+            style: GoogleFonts.poppins(
+              fontSize: 18,
+              color: Colors.grey[600],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -178,29 +191,38 @@ class BookingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isCancelled = booking["status"] == "cancelled";
-    final isCompleted = booking["status"] == "completed";
+    final status = booking['status'] as String;
+    final isCancelled = status == "cancelled";
+    final isCompleted = status == "completed";
+
+    final DateTime dateTime = DateTime.parse(booking["booking_date"]);
+    final String formattedDate = DateFormat('EEE, MMM d').format(dateTime);
+    final String formattedTime = DateFormat('h:mm a').format(dateTime);
+
+    final salonData = booking['salons'] as Map<String, dynamic>? ?? {};
+    final salonName = salonData['name'] ?? 'Unknown Salon';
+    final salonImage = salonData['image_url'] ?? '';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
+        color: Colors.grey[100],
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
+        border: Border.all(color: Colors.grey[200]!),
       ),
       child: Row(
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(16),
             child: Image.network(
-              booking["imageUrl"],
+              salonImage,
               width: 90,
               height: 90,
               fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => Container(
-                color: Colors.grey,
-                child: const Icon(Icons.spa, color: Colors.white54, size: 40),
+                color: Colors.grey[200],
+                child: const Icon(Icons.spa, color: Colors.grey, size: 40),
               ),
             ),
           ),
@@ -210,17 +232,17 @@ class BookingCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  booking["salon"],
+                  salonName,
                   style: GoogleFonts.poppins(
                     fontSize: 18,
                     fontWeight: FontWeight.w600,
-                    color: Colors.white,
+                    color: Colors.black,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  booking["service"],
-                  style: const TextStyle(color: Colors.white70, fontSize: 14),
+                  booking["service_name"] ?? "Service",
+                  style: const TextStyle(color: Colors.black87, fontSize: 14),
                 ),
                 const SizedBox(height: 8),
                 Row(
@@ -228,15 +250,15 @@ class BookingCard extends StatelessWidget {
                     const Icon(Icons.calendar_today, size: 16, color: Colors.orange),
                     const SizedBox(width: 4),
                     Text(
-                      DateFormat('EEE, MMM d').format(DateTime.parse(booking["date"])),
-                      style: const TextStyle(color: Colors.white70, fontSize: 13),
+                      formattedDate,
+                      style: const TextStyle(color: Colors.black87, fontSize: 13),
                     ),
                     const SizedBox(width: 12),
                     const Icon(Icons.access_time, size: 16, color: Colors.orange),
                     const SizedBox(width: 4),
                     Text(
-                      booking["time"],
-                      style: const TextStyle(color: Colors.white70, fontSize: 13),
+                      formattedTime,
+                      style: const TextStyle(color: Colors.black87, fontSize: 13),
                     ),
                   ],
                 ),
@@ -244,7 +266,7 @@ class BookingCard extends StatelessWidget {
                 Row(
                   children: [
                     Text(
-                      "\$${booking["price"].toStringAsFixed(2)}",
+                      "\$${(booking["price"] as num).toStringAsFixed(2)}",
                       style: GoogleFonts.poppins(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -263,11 +285,7 @@ class BookingCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
-                        isCancelled
-                            ? "Cancelled"
-                            : isCompleted
-                            ? "Completed"
-                            : "Upcoming",
+                        status.toUpperCase(),
                         style: GoogleFonts.poppins(
                           color: isCancelled
                               ? Colors.red

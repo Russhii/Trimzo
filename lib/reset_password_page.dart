@@ -1,4 +1,4 @@
-// lib/pages/reset_password_page.dart
+// lib/reset_password_page.dart
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -36,15 +36,17 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
     } finally {
-      setState(() => _isLoading = false);
+      if(mounted){
+        setState(() => _isLoading = false);
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D0D0D),
-      appBar: AppBar(backgroundColor: Colors.transparent, leading: const BackButton(color: Colors.white70)),
+      backgroundColor: Colors.white,
+      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0, leading: const BackButton(color: Colors.black)),
       body: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
@@ -52,7 +54,7 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
             const Spacer(),
             Image.asset('assets/images/reset_success.png', height: 200),
             const SizedBox(height: 40),
-            Text("Create New Password", style: GoogleFonts.poppins(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white)),
+            Text("Create New Password", style: GoogleFonts.poppins(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black)),
             const SizedBox(height: 40),
             _PasswordField(controller: _passCtrl, hint: "New Password"),
             const SizedBox(height: 20),
@@ -66,7 +68,7 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
                 style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF6B00), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30))),
                 child: _isLoading
                     ? const CircularProgressIndicator(color: Colors.white)
-                    : Text("Update Password", style: GoogleFonts.poppins(fontSize: 18, color: Colors.white)),
+                    : Text("Update Password", style: GoogleFonts.poppins(fontSize: 18, color: Colors.white, fontWeight: FontWeight.w600)),
               ),
             ),
             const SizedBox(height: 40),
@@ -91,17 +93,17 @@ class _PasswordFieldState extends State<_PasswordField> {
     return TextField(
       controller: widget.controller,
       obscureText: _obscure,
-      style: const TextStyle(color: Colors.white),
+      style: const TextStyle(color: Colors.black),
       decoration: InputDecoration(
         hintText: widget.hint,
-        hintStyle: const TextStyle(color: Colors.white38),
-        prefixIcon: const Icon(Icons.lock_outline, color: Colors.white54),
+        hintStyle: const TextStyle(color: Colors.black38),
+        prefixIcon: const Icon(Icons.lock_outline, color: Colors.black54),
         suffixIcon: IconButton(
-          icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility, color: Colors.white54),
+          icon: Icon(_obscure ? Icons.visibility_off : Icons.visibility, color: Colors.black54),
           onPressed: () => setState(() => _obscure = !_obscure),
         ),
         filled: true,
-        fillColor: Colors.white.withOpacity(0.08),
+        fillColor: Colors.grey[200],
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
       ),
     );

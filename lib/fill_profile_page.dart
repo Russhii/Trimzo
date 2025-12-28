@@ -53,12 +53,12 @@ class _FillProfilePageState extends State<FillProfilePage> {
       firstDate: DateTime(1900),
       lastDate: DateTime.now(),
       builder: (context, child) => Theme(
-        data: ThemeData.dark().copyWith(
-          colorScheme: const ColorScheme.dark(
+        data: ThemeData.light().copyWith(
+          colorScheme: const ColorScheme.light(
             primary: Colors.orange,
             onPrimary: Colors.white,
-            surface: Color(0xFF1E1E1E),
-            onSurface: Colors.white,
+            surface: Colors.white,
+            onSurface: Colors.black,
           ),
         ),
         child: child!,
@@ -122,12 +122,12 @@ class _FillProfilePageState extends State<FillProfilePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D0D0D),
+      backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios, color: Colors.white70),
+          icon: const Icon(Icons.arrow_back_ios, color: Colors.black),
           onPressed: () {
             Navigator.pushAndRemoveUntil(
               context,
@@ -142,7 +142,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
           style: GoogleFonts.poppins(
             fontSize: 20,
             fontWeight: FontWeight.bold,
-            color: Colors.white,
+            color: Colors.black,
           ),
         ),
       ),
@@ -161,8 +161,9 @@ class _FillProfilePageState extends State<FillProfilePage> {
                       ? FileImage(_profileImage!)
                       : const AssetImage('assets/avatar_placeholder.png')
                   as ImageProvider,
+                  backgroundColor: Colors.grey[200],
                   child: _profileImage == null
-                      ? const Icon(Icons.person, size: 70, color: Colors.white54)
+                      ? Icon(Icons.person, size: 70, color: Colors.grey[400])
                       : null,
                 ),
                 Positioned(
@@ -250,12 +251,12 @@ class _FillProfilePageState extends State<FillProfilePage> {
     return TextField(
       controller: controller,
       enabled: enabled,
-      style: const TextStyle(color: Colors.white),
+      style: const TextStyle(color: Colors.black),
       decoration: InputDecoration(
         hintText: hint,
-        hintStyle: const TextStyle(color: Colors.white38),
+        hintStyle: const TextStyle(color: Colors.black38),
         filled: true,
-        fillColor: Colors.white.withOpacity(0.08),
+        fillColor: Colors.grey[200],
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide.none,
@@ -273,7 +274,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.08),
+          color: Colors.grey[200],
           borderRadius: BorderRadius.circular(16),
         ),
         child: Row(
@@ -283,12 +284,12 @@ class _FillProfilePageState extends State<FillProfilePage> {
                   ? "Birthday"
                   : DateFormat('MM/dd/yyyy').format(_selectedDate!),
               style: TextStyle(
-                color: _selectedDate == null ? Colors.white38 : Colors.white,
+                color: _selectedDate == null ? Colors.black38 : Colors.black,
                 fontSize: 16,
               ),
             ),
             const Spacer(),
-            const Icon(Icons.calendar_today, color: Colors.white54),
+            Icon(Icons.calendar_today, color: Colors.black54),
           ],
         ),
       ),
@@ -297,12 +298,12 @@ class _FillProfilePageState extends State<FillProfilePage> {
 
   Widget _buildPhoneField() {
     return IntlPhoneField(
-      style: const TextStyle(color: Colors.white),
+      style: const TextStyle(color: Colors.black),
       decoration: InputDecoration(
         labelText: 'Phone Number',
-        labelStyle: const TextStyle(color: Colors.white38),
+        labelStyle: const TextStyle(color: Colors.black38),
         filled: true,
-        fillColor: Colors.white.withOpacity(0.08),
+        fillColor: Colors.grey[200],
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide.none,
@@ -312,8 +313,8 @@ class _FillProfilePageState extends State<FillProfilePage> {
       onChanged: (phone) {
         _fullPhoneNumber = phone.completeNumber;
       },
-      dropdownTextStyle: const TextStyle(color: Colors.white),
-      dropdownIcon: const Icon(Icons.arrow_drop_down, color: Colors.white),
+      dropdownTextStyle: const TextStyle(color: Colors.black),
+      dropdownIcon: const Icon(Icons.arrow_drop_down, color: Colors.black),
     );
   }
 
@@ -322,16 +323,16 @@ class _FillProfilePageState extends State<FillProfilePage> {
   Widget _buildGenderDropdown() {
     return DropdownButtonFormField<String>(
       value: _gender,
-      dropdownColor: const Color(0xFF1E1E1E),
-      style: const TextStyle(color: Colors.white),
+      dropdownColor: Colors.white,
+      style: const TextStyle(color: Colors.black),
       decoration: InputDecoration(
         filled: true,
-        fillColor: Colors.white.withOpacity(0.08),
+        fillColor: Colors.grey[200],
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide.none,
         ),
-        suffixIcon: const Icon(Icons.arrow_drop_down, color: Colors.white54),
+        suffixIcon: const Icon(Icons.arrow_drop_down, color: Colors.black54),
       ),
       items: ['Male', 'Female', 'Other']
           .map((g) => DropdownMenuItem(value: g, child: Text(g)))
@@ -344,18 +345,18 @@ class _FillProfilePageState extends State<FillProfilePage> {
   Widget _buildUserTypeDropdown() {
     return DropdownButtonFormField<String>(
       value: _userType,
-      dropdownColor: const Color(0xFF1E1E1E),
-      style: const TextStyle(color: Colors.white),
+      dropdownColor: Colors.white,
+      style: const TextStyle(color: Colors.black),
       decoration: InputDecoration(
         labelText: "Account Type",
-        labelStyle: const TextStyle(color: Colors.white54),
+        labelStyle: const TextStyle(color: Colors.black54),
         filled: true,
-        fillColor: Colors.white.withOpacity(0.08),
+        fillColor: Colors.grey[200],
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide.none,
         ),
-        suffixIcon: const Icon(Icons.arrow_drop_down, color: Colors.white54),
+        suffixIcon: const Icon(Icons.arrow_drop_down, color: Colors.black54),
       ),
       items: ['Customer', 'Barber']
           .map((type) => DropdownMenuItem(value: type, child: Text(type)))

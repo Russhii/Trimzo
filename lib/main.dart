@@ -1,5 +1,6 @@
 // lib/main.dart
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'login_page.dart';
 import 'home_page.dart';
@@ -42,7 +43,18 @@ class MyApp extends StatelessWidget {
       navigatorKey: navigatorKey, // ADD THIS LINE
       debugShowCheckedModeBanner: false,
       title: 'Salon App',
-      theme: ThemeData(scaffoldBackgroundColor: const Color(0xFF0D0D0D)),
+      theme: ThemeData(
+        brightness: Brightness.light,
+        primaryColor: const Color(0xFFFF6B00),
+        scaffoldBackgroundColor: Colors.white,
+        textTheme: GoogleFonts.poppinsTextTheme(
+          ThemeData.light().textTheme,
+        ),
+        colorScheme: ColorScheme.fromSwatch(primarySwatch: Colors.orange).copyWith(
+          secondary: const Color(0xFFFF6B00),
+          brightness: Brightness.light,
+        ),
+      ),
       home: const AuthWrapper(),
     );
   }

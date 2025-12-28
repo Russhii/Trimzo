@@ -42,16 +42,18 @@ class _SignInPageState extends State<SignInPage> {
         }, onConflict: 'id');
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Login failed: ${e.toString()}")),
-      );
+      if(mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Login failed: ${e.toString()}")),
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D0D0D),
+      backgroundColor: Colors.white,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -66,11 +68,11 @@ class _SignInPageState extends State<SignInPage> {
                     MaterialPageRoute(builder: (_) => const LoginPage()),
                   );
                 },
-                icon: const Icon(Icons.arrow_back_ios, color: Colors.white70),
+                icon: const Icon(Icons.arrow_back_ios, color: Colors.black),
               ),
 
               const SizedBox(height: 20),
-              Text("Login to your\nAccount", style: GoogleFonts.poppins(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.white)),
+              Text("Login to your\nAccount", style: GoogleFonts.poppins(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.black)),
 
               const Spacer(flex: 2),
 
@@ -81,7 +83,7 @@ class _SignInPageState extends State<SignInPage> {
               const SizedBox(height: 16),
               Row(children: [
                 Checkbox(value: _rememberMe, activeColor: Colors.orange, onChanged: (v) => setState(() => _rememberMe = v!)),
-                Text("Remember me", style: GoogleFonts.poppins(color: Colors.white)),
+                Text("Remember me", style: GoogleFonts.poppins(color: Colors.black)),
               ]),
 
               const SizedBox(height: 30),
@@ -96,7 +98,7 @@ class _SignInPageState extends State<SignInPage> {
                     shadowColor: const Color(0xFFFF6B00).withOpacity(0.7),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                   ),
-                  child: Text("Sign in", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600)),
+                  child: Text("Sign in", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
                 ),
               ),
 
@@ -174,13 +176,13 @@ class _InputField extends StatelessWidget {
     return TextField(
       controller: controller,
       obscureText: isPassword,
-      style: const TextStyle(color: Colors.white),
+      style: const TextStyle(color: Colors.black),
       decoration: InputDecoration(
-        prefixIcon: Icon(icon, color: Colors.white54),
+        prefixIcon: Icon(icon, color: Colors.black54),
         hintText: hint,
-        hintStyle: const TextStyle(color: Colors.white38),
+        hintStyle: const TextStyle(color: Colors.black38),
         filled: true,
-        fillColor: Colors.white.withOpacity(0.08),
+        fillColor: Colors.grey[200],
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
       ),
     );
@@ -201,7 +203,7 @@ class _SocialIcon extends StatelessWidget {
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(16)),
+        decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(16)),
         child: SvgPicture.network(url, height: 32, width: 32, colorFilter: color != null ? ColorFilter.mode(color!, BlendMode.srcIn) : null),
       ),
     );

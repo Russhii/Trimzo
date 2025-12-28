@@ -24,10 +24,12 @@ class ProfilePage extends StatelessWidget {
     final fullName = user.userMetadata?['full_name'] ?? user.email?.split('@').first ?? 'User';
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0D0D0D),
+      backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
-        title: Text("Profile", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.white)),
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black),
+        title: Text("Profile", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.black)),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout, color: Colors.red),
@@ -43,13 +45,13 @@ class ProfilePage extends StatelessWidget {
               radius: 60,
               backgroundImage: NetworkImage(user.userMetadata?['avatar_url'] ?? ''),
               child: user.userMetadata?['avatar_url'] == null
-                  ? const Icon(Icons.person, size: 80, color: Colors.white54)
+                  ? const Icon(Icons.person, size: 80, color: Colors.grey)
                   : null,
             ),
             const SizedBox(height: 20),
-            Text(fullName, style: GoogleFonts.poppins(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white)),
+            Text(fullName, style: GoogleFonts.poppins(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.black)),
             const SizedBox(height: 8),
-            Text(user.email ?? '', style: GoogleFonts.poppins(color: Colors.white60, fontSize: 16)),
+            Text(user.email ?? '', style: GoogleFonts.poppins(color: Colors.black54, fontSize: 16)),
             const SizedBox(height: 40),
             _menuItem(Icons.person_outline, "Edit Profile", () {}),
             _menuItem(Icons.lock_outline, "Change Password", () {}),
@@ -78,8 +80,8 @@ class ProfilePage extends StatelessWidget {
   Widget _menuItem(IconData icon, String title, VoidCallback onTap) {
     return ListTile(
       leading: Icon(icon, color: Colors.orange),
-      title: Text(title, style: GoogleFonts.poppins(color: Colors.white)),
-      trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.white54),
+      title: Text(title, style: GoogleFonts.poppins(color: Colors.black)),
+      trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.black54),
       onTap: onTap,
     );
   }

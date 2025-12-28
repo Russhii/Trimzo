@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
-import 'package:geolocator/geolocator.dart'; // NEW
+import 'package:geolocator/geolocator.dart';
 
 class MapPickerPage extends StatefulWidget {
   const MapPickerPage({super.key});
@@ -16,10 +16,10 @@ class MapPickerPage extends StatefulWidget {
 class _MapPickerPageState extends State<MapPickerPage> {
   final MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _addressController = TextEditingController();
 
-  // Default Location (will be overwritten by GPS)
+  // Default Location
   LatLng _center = const LatLng(18.5204, 73.8567);
-  String _address = "Fetching location...";
   bool _isMoving = false;
   bool _isLoadingGPS = false;
   List<dynamic> _searchResults = [];
@@ -28,12 +28,13 @@ class _MapPickerPageState extends State<MapPickerPage> {
   @override
   void initState() {
     super.initState();
-    _getCurrentLocation(); // Auto-fetch user's real location on start
+    _getCurrentLocation();
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _addressController.dispose();
     _debounce?.cancel();
     _mapController.dispose();
     super.dispose();
@@ -43,7 +44,6 @@ class _MapPickerPageState extends State<MapPickerPage> {
   Future<void> _getCurrentLocation() async {
     setState(() => _isLoadingGPS = true);
 
-    // Check services and permissions
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       if (mounted) setState(() => _isLoadingGPS = false);
@@ -60,10 +60,9 @@ class _MapPickerPageState extends State<MapPickerPage> {
       }
     }
 
-    // Get precise position
     try {
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high, // High accuracy mode
+        desiredAccuracy: LocationAccuracy.high,
       );
 
       if (mounted) {
@@ -78,11 +77,10 @@ class _MapPickerPageState extends State<MapPickerPage> {
 
   // --- 2. MOVE MAP & UPDATE ADDRESS ---
   void _moveToLocation(double lat, double lng) {
-    _center = LatLng(lat, lng); // Update internal state
-    _mapController.move(_center, 17.0); // Higher zoom (17) is more accurate
+    _center = LatLng(lat, lng);
+    _mapController.move(_center, 17.0);
     _getAddress(lat, lng);
 
-    // Clear search results
     if (mounted) {
       setState(() {
         _searchResults = [];
@@ -94,9 +92,8 @@ class _MapPickerPageState extends State<MapPickerPage> {
 
   // --- 3. REVERSE GEOCODING (Get Address) ---
   Future<void> _getAddress(double lat, double lng) async {
-    setState(() => _address = "Fetching precise address...");
+    if(mounted) setState(() => _addressController.text = "Fetching precise address...");
 
-    // zoom=18 gives the most detailed address (house numbers)
     final url = Uri.parse(
         'https://nominatim.openstreetmap.org/reverse?format=json&lat=$lat&lon=$lng&zoom=18&addressdetails=1');
 
@@ -106,30 +103,28 @@ class _MapPickerPageState extends State<MapPickerPage> {
       if (response.statusCode == 200 && mounted) {
         final data = json.decode(response.body);
         final addr = data['address'];
+        String preciseAddress;
 
         if (addr != null) {
-          // Construct a precise address manually
-          // We prioritize House Number and Road
           List<String> parts = [];
-
           if (addr['house_number'] != null) parts.add(addr['house_number']);
           if (addr['road'] != null) parts.add(addr['road']);
           if (addr['suburb'] != null) parts.add(addr['suburb']);
           if (addr['city'] != null) parts.add(addr['city']);
           if (addr['postcode'] != null) parts.add(addr['postcode']);
 
-          // If parts are empty, fall back to display_name
-          String preciseAddress = parts.isNotEmpty
-              ? parts.join(', ')
+          preciseAddress = parts.isNotEmpty
+              ? parts.toSet().join(', ')
               : data['display_name'] ?? "Unknown Location";
-
-          setState(() => _address = preciseAddress);
         } else {
-          setState(() => _address = data['display_name'] ?? "Unknown Location");
+          preciseAddress = data['display_name'] ?? "Unknown Location";
         }
+        if(mounted) setState(() => _addressController.text = preciseAddress);
+      } else {
+        if(mounted) setState(() => _addressController.text = "Could not fetch address");
       }
     } catch (e) {
-      if (mounted) setState(() => _address = "Network Error");
+      if (mounted) setState(() => _addressController.text = "Network Error");
     }
   }
 
@@ -149,17 +144,18 @@ class _MapPickerPageState extends State<MapPickerPage> {
     } catch (e) { debugPrint(e.toString()); }
   }
 
+  // --- FIXED: Updated to use MapCamera for flutter_map v6+ ---
   void _onMapPositionChanged(MapCamera camera, bool hasGesture) {
     if (hasGesture) {
       setState(() {
         _isMoving = true;
-        _address = "Locating...";
+        _addressController.text = "Locating...";
       });
       _debounce?.cancel();
       _debounce = Timer(const Duration(milliseconds: 1000), () {
         if (mounted) {
           setState(() => _isMoving = false);
-          _center = camera.center;
+          _center = camera.center; // 'center' is now a property of 'camera'
           _getAddress(_center.latitude, _center.longitude);
         }
       });
@@ -176,8 +172,8 @@ class _MapPickerPageState extends State<MapPickerPage> {
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              initialCenter: _center,
-              initialZoom: 17.0, // High zoom for accuracy
+              initialCenter: _center, // FIXED: Changed 'center' to 'initialCenter'
+              initialZoom: 17.0,      // FIXED: Changed 'zoom' to 'initialZoom'
               onPositionChanged: _onMapPositionChanged,
               interactionOptions: const InteractionOptions(
                 flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
@@ -185,7 +181,7 @@ class _MapPickerPageState extends State<MapPickerPage> {
             ),
             children: [
               TileLayer(
-                urlTemplate: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', // 'Voyager' is clearer than 'Dark' for addresses
+                urlTemplate: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
                 subdomains: const ['a', 'b', 'c'],
                 userAgentPackageName: 'com.example.app',
               ),
@@ -204,7 +200,7 @@ class _MapPickerPageState extends State<MapPickerPage> {
                     decoration: BoxDecoration(
                         color: Colors.black,
                         borderRadius: BorderRadius.circular(10),
-                        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4)]
+                        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)]
                     ),
                     child: Text(_isMoving ? "..." : "Exact Spot",
                         style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
@@ -218,7 +214,7 @@ class _MapPickerPageState extends State<MapPickerPage> {
 
           // MY LOCATION BUTTON (Bottom Right)
           Positioned(
-            bottom: 220, right: 20,
+            bottom: 240, right: 20,
             child: FloatingActionButton(
               backgroundColor: Colors.white,
               onPressed: _isLoadingGPS ? null : _getCurrentLocation,
@@ -258,8 +254,8 @@ class _MapPickerPageState extends State<MapPickerPage> {
                 if (_searchResults.isNotEmpty)
                   Container(
                     margin: const EdgeInsets.only(top: 5),
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15)),
-                    constraints: const BoxConstraints(maxHeight: 200),
+                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(15), boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 5)]),
+                    constraints: const BoxConstraints(maxHeight: 180),
                     child: ListView.separated(
                       padding: EdgeInsets.zero,
                       shrinkWrap: true,
@@ -287,34 +283,45 @@ class _MapPickerPageState extends State<MapPickerPage> {
           Positioned(
             bottom: 0, left: 0, right: 0,
             child: Container(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 30),
               decoration: const BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                  boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, -5))]
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                  boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, -5))]
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text("Selected Location", style: TextStyle(color: Colors.grey, fontSize: 12)),
-                  const SizedBox(height: 8),
-                  Text(_address, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold), maxLines: 2),
-                  const SizedBox(height: 15),
+                  const Text("SELECTED LOCATION", style: TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: _addressController,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding: EdgeInsets.all(12),
+                      border: OutlineInputBorder(),
+                      hintText: 'Add address details or suite number',
+                    ),
+                    maxLines: 2,
+                  ),
+                  const SizedBox(height: 20),
                   ElevatedButton(
-                    onPressed: _isMoving ? null : () {
+                    onPressed: _isMoving || _isLoadingGPS ? null : () {
                       Navigator.pop(context, {
-                        'address': _address,
+                        'address': _addressController.text,
                         'lat': _center.latitude,
                         'lng': _center.longitude,
                       });
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.black,
+                      foregroundColor: Colors.white,
                       minimumSize: const Size.fromHeight(50),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
-                    child: const Text("CONFIRM LOCATION", style: TextStyle(color: Colors.white)),
-                  )
+                    child: const Text("Confirm Location", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ),
                 ],
               ),
             ),

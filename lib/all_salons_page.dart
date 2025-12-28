@@ -9,20 +9,44 @@ class AllSalonsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0D0D0D),
+      backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
-        iconTheme: const IconThemeData(color: Colors.white),
-        title: Text("All Salons", style: GoogleFonts.poppins(color: Colors.white)),
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black),
+        title: Text(
+            "All Salons",
+            style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold)
+        ),
       ),
       body: FutureBuilder<List<Map<String, dynamic>>>(
-        // Fetch ALL salons (no limit)
-        future: Supabase.instance.client.from('salons').select().order('id'),
+        // Fetch ALL salons, newest first
+        future: Supabase.instance.client
+            .from('salons')
+            .select()
+            .order('created_at', ascending: false),
         builder: (context, snapshot) {
-          if (!snapshot.hasData) {
+          // 1. Loading State
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator(color: Colors.orange));
           }
-          final salons = snapshot.data!;
+
+          // 2. Error State
+          if (snapshot.hasError) {
+            return Center(child: Text("Error: ${snapshot.error}"));
+          }
+
+          // 3. Data State
+          final salons = snapshot.data ?? [];
+
+          if (salons.isEmpty) {
+            return Center(
+                child: Text(
+                    "No salons added yet.",
+                    style: GoogleFonts.poppins(color: Colors.grey)
+                )
+            );
+          }
 
           return ListView.separated(
             padding: const EdgeInsets.all(20),
@@ -31,11 +55,12 @@ class AllSalonsPage extends StatelessWidget {
             itemBuilder: (context, index) {
               final salon = salons[index];
               return _SharedSalonCard(
-                name: salon['name'],
-                address: salon['address'],
-                distance: salon['distance'],
-                rating: (salon['rating'] as num).toDouble(),
-                imageUrl: salon['image_url'],
+                // Use '??' to provide fallbacks if data is missing in DB
+                name: salon['name'] ?? 'Unknown Salon',
+                address: salon['address'] ?? 'No address provided',
+                distance: salon['distance'] ?? 'Nearby',
+                rating: (salon['rating'] as num?)?.toDouble() ?? 5.0,
+                imageUrl: salon['image_url'] ?? '',
               );
             },
           );
@@ -45,7 +70,7 @@ class AllSalonsPage extends StatelessWidget {
   }
 }
 
-// Reusable Card Widget (Copy of your design)
+// Reusable Card Widget
 class _SharedSalonCard extends StatelessWidget {
   final String name;
   final String address;
@@ -66,12 +91,21 @@ class _SharedSalonCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
+        color: Colors.grey[100],
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          )
+        ],
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Image with Error Handling
           ClipRRect(
             borderRadius: BorderRadius.circular(16),
             child: Image.network(
@@ -79,26 +113,66 @@ class _SharedSalonCard extends StatelessWidget {
               width: 90,
               height: 90,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(color: Colors.grey, child: const Icon(Icons.spa, color: Colors.white54, size: 40)),
+              // If image URL is broken or empty, show icon
+              errorBuilder: (_, __, ___) => Container(
+                width: 90,
+                height: 90,
+                color: Colors.grey[300],
+                child: const Icon(Icons.store, color: Colors.grey, size: 40),
+              ),
             ),
           ),
           const SizedBox(width: 16),
+          // Text Details
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(name, style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
+                Text(
+                  name,
+                  style: GoogleFonts.poppins(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
                 const SizedBox(height: 4),
-                Text(address, style: const TextStyle(color: Colors.white60, fontSize: 13)),
-                const SizedBox(height: 8),
+                Text(
+                  address,
+                  style: const TextStyle(color: Colors.black54, fontSize: 13),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 10),
                 Row(
                   children: [
-                    const Icon(Icons.location_on, size: 16, color: Colors.orange),
-                    Text(" $distance", style: const TextStyle(color: Colors.orange, fontSize: 13)),
-                    const Spacer(),
-                    const Icon(Icons.star, color: Colors.amber, size: 18),
+                    const Icon(Icons.location_on, size: 14, color: Colors.orange),
                     const SizedBox(width: 4),
-                    Text("$rating", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                    Text(
+                        distance,
+                        style: const TextStyle(color: Colors.orange, fontSize: 13, fontWeight: FontWeight.w500)
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey[200]!),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.star, color: Colors.amber, size: 14),
+                          const SizedBox(width: 4),
+                          Text(
+                              rating.toString(),
+                              style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12)
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ],
