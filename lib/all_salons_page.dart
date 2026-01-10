@@ -15,14 +15,15 @@ class AllSalonsPage extends StatelessWidget {
         elevation: 0,
         iconTheme: const IconThemeData(color: Colors.black),
         title: Text(
-            "All Salons",
-            style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold)
+          "All Salons",
+          style: GoogleFonts.poppins(
+              color: Colors.black, fontWeight: FontWeight.bold),
         ),
       ),
       body: FutureBuilder<List<Map<String, dynamic>>>(
-        // Fetch ALL salons, newest first
+        // FIX 1: Changed table name from 'salons' to 'barber_shops'
         future: Supabase.instance.client
-            .from('salons')
+            .from('barber_shops')
             .select()
             .order('created_at', ascending: false),
         builder: (context, snapshot) {
@@ -41,10 +42,10 @@ class AllSalonsPage extends StatelessWidget {
 
           if (salons.isEmpty) {
             return Center(
-                child: Text(
-                    "No salons added yet.",
-                    style: GoogleFonts.poppins(color: Colors.grey)
-                )
+              child: Text(
+                "No salons added yet.",
+                style: GoogleFonts.poppins(color: Colors.grey),
+              ),
             );
           }
 
@@ -54,13 +55,25 @@ class AllSalonsPage extends StatelessWidget {
             separatorBuilder: (ctx, i) => const SizedBox(height: 16),
             itemBuilder: (context, index) {
               final salon = salons[index];
+
+              // FIX 2: Handle 'image_urls' array.
+              // We grab the first image if the list exists and isn't empty.
+              String displayImage = '';
+              if (salon['image_urls'] != null) {
+                final List images = salon['image_urls'] as List;
+                if (images.isNotEmpty) {
+                  displayImage = images[0].toString();
+                }
+              }
+
               return _SharedSalonCard(
-                // Use '??' to provide fallbacks if data is missing in DB
                 name: salon['name'] ?? 'Unknown Salon',
                 address: salon['address'] ?? 'No address provided',
-                distance: salon['distance'] ?? 'Nearby',
-                rating: (salon['rating'] as num?)?.toDouble() ?? 5.0,
-                imageUrl: salon['image_url'] ?? '',
+                // FIX 3: 'distance' doesn't exist in your DB.
+                // Using 'Nearby' as fallback or you must calculate it using lat/long.
+                distance: 'Nearby',
+                rating: (salon['rating'] as num?)?.toDouble() ?? 0.0,
+                imageUrl: displayImage,
               );
             },
           );
@@ -70,7 +83,7 @@ class AllSalonsPage extends StatelessWidget {
   }
 }
 
-// Reusable Card Widget
+// Reusable Card Widget (No changes needed here, logic handled above)
 class _SharedSalonCard extends StatelessWidget {
   final String name;
   final String address;
@@ -105,7 +118,6 @@ class _SharedSalonCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Image with Error Handling
           ClipRRect(
             borderRadius: BorderRadius.circular(16),
             child: Image.network(
@@ -113,7 +125,6 @@ class _SharedSalonCard extends StatelessWidget {
               width: 90,
               height: 90,
               fit: BoxFit.cover,
-              // If image URL is broken or empty, show icon
               errorBuilder: (_, __, ___) => Container(
                 width: 90,
                 height: 90,
@@ -123,7 +134,6 @@ class _SharedSalonCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 16),
-          // Text Details
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -133,8 +143,7 @@ class _SharedSalonCard extends StatelessWidget {
                   style: GoogleFonts.poppins(
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
-                      color: Colors.black
-                  ),
+                      color: Colors.black),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -150,13 +159,15 @@ class _SharedSalonCard extends StatelessWidget {
                   children: [
                     const Icon(Icons.location_on, size: 14, color: Colors.orange),
                     const SizedBox(width: 4),
-                    Text(
-                        distance,
-                        style: const TextStyle(color: Colors.orange, fontSize: 13, fontWeight: FontWeight.w500)
-                    ),
+                    Text(distance,
+                        style: const TextStyle(
+                            color: Colors.orange,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500)),
                     const Spacer(),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(12),
@@ -166,10 +177,11 @@ class _SharedSalonCard extends StatelessWidget {
                         children: [
                           const Icon(Icons.star, color: Colors.amber, size: 14),
                           const SizedBox(width: 4),
-                          Text(
-                              rating.toString(),
-                              style: const TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 12)
-                          ),
+                          Text(rating.toString(),
+                              style: const TextStyle(
+                                  color: Colors.black,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12)),
                         ],
                       ),
                     ),

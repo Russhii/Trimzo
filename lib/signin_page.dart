@@ -32,19 +32,42 @@ class _SignInPageState extends State<SignInPage> {
         password: _passCtrl.text,
       );
 
-// Auto-create profile if missing (safe upsert)
-      if (response.user != null) {
+      if (response.session != null && response.user != null) {
+        // Auto-create/upsert profile
         await Supabase.instance.client
             .from('profiles')
             .upsert({
           'id': response.user!.id,
           'email': response.user!.email,
         }, onConflict: 'id');
+
+        if (mounted) {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (_) => const HomePage()),
+                (route) => false,
+          );
+        }
+      }
+    } on AuthException catch (e) {
+      String message;
+      if (e.message.contains('Invalid login credentials')) {
+        message = "Invalid email or password";
+      } else if (e.message.contains('Email not confirmed')) {
+        message = "Please confirm your email first. Check your inbox/spam.";
+      } else {
+        message = "Login failed: ${e.message}";
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message), backgroundColor: Colors.red),
+        );
       }
     } catch (e) {
-      if(mounted) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Login failed: ${e.toString()}")),
+          SnackBar(content: Text("Unexpected error: $e")),
         );
       }
     }

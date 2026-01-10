@@ -4,8 +4,6 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'fill_profile_page.dart';
-import 'home_page.dart';
-import 'signin_page.dart';
 import 'login_page.dart';
 
 class SignUpPage extends StatefulWidget {
@@ -17,7 +15,8 @@ class SignUpPage extends StatefulWidget {
 class _SignUpPageState extends State<SignUpPage> {
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
-  bool _rememberMe = false;
+
+  bool _isLoading = false;
 
   Future<void> _signUpAndRedirect() async {
     if (_emailCtrl.text.isEmpty || _passCtrl.text.isEmpty) {
@@ -27,17 +26,28 @@ class _SignUpPageState extends State<SignUpPage> {
       return;
     }
 
+    setState(() => _isLoading = true);
+
     try {
-      // This will now work instantly because email confirmation is OFF in dashboard
+      // 1. Create User in Auth
       final response = await Supabase.instance.client.auth.signUp(
         email: _emailCtrl.text.trim(),
         password: _passCtrl.text,
       );
 
-      if (!mounted) return;
+      final user = response.user;
 
-      if (response.user != null) {
-        // Profile created automatically via trigger → now go to Fill Profile
+      if (user != null) {
+        // 2. Create profile with default 'customer' role
+        await Supabase.instance.client.from('profiles').upsert({
+          'id': user.id,
+          'email': _emailCtrl.text.trim(),
+          'user_type': 'customer', // <--- Hardcoded default value
+          'updated_at': DateTime.now().toIso8601String(),
+        });
+
+        if (!mounted) return;
+
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(builder: (_) => const FillProfilePage()),
@@ -48,6 +58,8 @@ class _SignUpPageState extends State<SignUpPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Error: ${e.toString()}")),
       );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -56,87 +68,81 @@ class _SignUpPageState extends State<SignUpPage> {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 32),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 20),
-
               IconButton(
-                onPressed: () {
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(builder: (_) => const LoginPage()),
-                  );
-                },
+                onPressed: () => Navigator.pushReplacement(
+                    context, MaterialPageRoute(builder: (_) => const LoginPage())),
                 icon: const Icon(Icons.arrow_back_ios, color: Colors.black),
               ),
-
               const SizedBox(height: 20),
-
               Text(
                 "Create your\nAccount",
                 style: GoogleFonts.poppins(
-                  fontSize: 40,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black,
-                ),
+                    fontSize: 40,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black),
               ),
-
-              const Spacer(flex: 2),
-
-              _InputField(controller: _emailCtrl, hint: "Email", icon: Icons.mail_outline_rounded),
+              const SizedBox(height: 40),
+              _InputField(
+                  controller: _emailCtrl,
+                  hint: "Email",
+                  icon: Icons.mail_outline_rounded),
               const SizedBox(height: 20),
-              _InputField(controller: _passCtrl, hint: "Password", icon: Icons.lock_outline_rounded, isPassword: true),
+              _InputField(
+                  controller: _passCtrl,
+                  hint: "Password",
+                  icon: Icons.lock_outline_rounded,
+                  isPassword: true),
 
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Checkbox(
-                    value: _rememberMe,
-                    activeColor: Colors.orange,
-                    onChanged: (v) => setState(() => _rememberMe = v!),
-                  ),
-                  Text("Remember me", style: GoogleFonts.poppins(color: Colors.black)),
-                ],
-              ),
+              // --- ROLE SELECTION REMOVED FROM HERE ---
 
               const SizedBox(height: 40),
               SizedBox(
                 width: double.infinity,
                 height: 60,
                 child: ElevatedButton(
-                  onPressed: _signUpAndRedirect,
+                  onPressed: _isLoading ? null : _signUpAndRedirect,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFFF6B00),
-                    elevation: 20,
-                    shadowColor: const Color(0xFFFF6B00).withOpacity(0.7),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                    elevation: 10,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(30)),
                   ),
-                  child: Text(
-                    "Sign up",
-                    style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white),
-                  ),
+                  child: _isLoading
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : Text("Sign up",
+                      style: GoogleFonts.poppins(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white)),
                 ),
               ),
-
-              const Spacer(flex: 2),
-              const Center(child: Text("or continue with", style: TextStyle(color: Colors.grey))),
+              const SizedBox(height: 40),
+              const Center(
+                  child: Text("or continue with",
+                      style: TextStyle(color: Colors.grey))),
               const SizedBox(height: 20),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  _SocialIcon('https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/facebook.svg', color: const Color(0xFF1877F2)),
+                  _SocialIcon(
+                      'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/facebook.svg',
+                      color: const Color(0xFF1877F2)),
                   const SizedBox(width: 30),
-                  _SocialIcon('https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/google.svg'),
+                  _SocialIcon(
+                      'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/google.svg'),
                 ],
               ),
-
               const SizedBox(height: 30),
               Center(
                 child: GestureDetector(
-                  onTap: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const SignInPage())),
+                  onTap: () => Navigator.pushReplacement(context,
+                      MaterialPageRoute(builder: (_) => const LoginPage())),
                   child: Text.rich(
                     TextSpan(
                       text: "Already have an account? ",
@@ -144,7 +150,9 @@ class _SignUpPageState extends State<SignUpPage> {
                       children: [
                         TextSpan(
                           text: "Sign in",
-                          style: GoogleFonts.poppins(color: const Color(0xFFFF6B00), fontWeight: FontWeight.bold),
+                          style: GoogleFonts.poppins(
+                              color: const Color(0xFFFF6B00),
+                              fontWeight: FontWeight.bold),
                         )
                       ],
                     ),
@@ -160,13 +168,18 @@ class _SignUpPageState extends State<SignUpPage> {
   }
 }
 
-// Reusable widgets
+// Helper Widgets
+
 class _InputField extends StatelessWidget {
   final TextEditingController controller;
   final String hint;
   final IconData icon;
   final bool isPassword;
-  const _InputField({required this.controller, required this.hint, required this.icon, this.isPassword = false});
+  const _InputField(
+      {required this.controller,
+        required this.hint,
+        required this.icon,
+        this.isPassword = false});
 
   @override
   Widget build(BuildContext context) {
@@ -180,7 +193,9 @@ class _InputField extends StatelessWidget {
         hintStyle: const TextStyle(color: Colors.black38),
         filled: true,
         fillColor: Colors.black.withOpacity(0.08),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+        border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide.none),
       ),
     );
   }
@@ -195,8 +210,14 @@ class _SocialIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: Colors.black.withOpacity(0.08), borderRadius: BorderRadius.circular(16)),
-      child: SvgPicture.network(url, height: 32, width: 32, colorFilter: color != null ? ColorFilter.mode(color!, BlendMode.srcIn) : null),
+      decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(16)),
+      child: SvgPicture.network(url,
+          height: 32,
+          width: 32,
+          colorFilter:
+          color != null ? ColorFilter.mode(color!, BlendMode.srcIn) : null),
     );
   }
 }
