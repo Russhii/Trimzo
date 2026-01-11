@@ -994,6 +994,10 @@ class _BookingCard extends StatelessWidget {
 // TAB 3: MY SHOP (Connected to Supabase)
 // =======================================================
 
+// =======================================================
+// TAB 3: MY SHOP (Updated Revenue Logic)
+// =======================================================
+
 class _MyShopTab extends StatefulWidget {
   const _MyShopTab();
 
@@ -1018,6 +1022,7 @@ class _MyShopTabState extends State<_MyShopTab> {
     if (userId == null) return;
 
     try {
+      // 1. Fetch Shop Details
       final shopResponse = await Supabase.instance.client
           .from('barber_shops')
           .select()
@@ -1028,18 +1033,38 @@ class _MyShopTabState extends State<_MyShopTab> {
 
       final shopId = shopResponse['id'];
 
+      // 2. Fetch Bookings (Get price, status, AND addons)
       final bookingsResponse = await Supabase.instance.client
           .from('bookings')
-          .select('price')
+          .select('price, status, addons') // Requesting addons column
           .eq('salon_id', shopId)
           .neq('status', 'cancelled');
 
       final List<dynamic> bookingsList = bookingsResponse;
+
+      // Count: All valid bookings (Upcoming + Accepted + Completed)
       int count = bookingsList.length;
+
       double revenue = 0.0;
 
       for (var b in bookingsList) {
-        revenue += (b['price'] as num).toDouble();
+        // --- NEW REVENUE LOGIC ---
+        // Only count revenue if the service is fully COMPLETED
+        if (b['status'] == 'completed') {
+
+          // 1. Add Base Service Price
+          revenue += (b['price'] as num).toDouble();
+
+          // 2. Add Price of Accepted Add-ons
+          if (b['addons'] != null) {
+            final List<dynamic> addons = b['addons'];
+            for (var addon in addons) {
+              if (addon['status'] == 'accepted') {
+                revenue += (addon['price'] as num).toDouble();
+              }
+            }
+          }
+        }
       }
 
       if (mounted) {
@@ -1056,12 +1081,15 @@ class _MyShopTabState extends State<_MyShopTab> {
     }
   }
 
+  // ... (Rest of the UI code remains the same, included below for completeness) ...
+
   void _openServiceManager(BuildContext context, int shopId) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (context) => _ManageServicesSheet(shopId: shopId),
     );
   }
@@ -1071,7 +1099,8 @@ class _MyShopTabState extends State<_MyShopTab> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (context) => _ManageStaffSheet(shopId: shopId),
     );
   }
@@ -1087,7 +1116,8 @@ class _MyShopTabState extends State<_MyShopTab> {
     }
 
     String imageUrl = '';
-    if (_shopData!['image_urls'] != null && (_shopData!['image_urls'] as List).isNotEmpty) {
+    if (_shopData!['image_urls'] != null &&
+        (_shopData!['image_urls'] as List).isNotEmpty) {
       imageUrl = _shopData!['image_urls'][0];
     }
 
@@ -1096,31 +1126,49 @@ class _MyShopTabState extends State<_MyShopTab> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        title: Text("My Shop", style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold)),
+        title: Text("My Shop",
+            style: GoogleFonts.poppins(
+                color: Colors.black, fontWeight: FontWeight.bold)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Colors.orange),
+            onPressed: _fetchShopData, // Allows manual refresh to see updated revenue
+          )
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
+            // Shop Header Card
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(20),
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4))
+                ],
               ),
               child: Row(
                 children: [
                   Container(
-                    width: 70, height: 70,
+                    width: 70,
+                    height: 70,
                     decoration: BoxDecoration(
                       color: Colors.grey[200],
                       borderRadius: BorderRadius.circular(15),
                       image: imageUrl.isNotEmpty
-                          ? DecorationImage(image: NetworkImage(imageUrl), fit: BoxFit.cover)
+                          ? DecorationImage(
+                          image: NetworkImage(imageUrl), fit: BoxFit.cover)
                           : null,
                     ),
-                    child: imageUrl.isEmpty ? const Icon(Icons.store, size: 30, color: Colors.grey) : null,
+                    child: imageUrl.isEmpty
+                        ? const Icon(Icons.store, size: 30, color: Colors.grey)
+                        : null,
                   ),
                   const SizedBox(width: 16),
                   Expanded(
@@ -1128,11 +1176,14 @@ class _MyShopTabState extends State<_MyShopTab> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(_shopData!['name'],
-                            style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                            style: GoogleFonts.poppins(
+                                fontSize: 18, fontWeight: FontWeight.bold)),
                         const SizedBox(height: 4),
                         Text(_shopData!['address'] ?? 'No Address',
-                            maxLines: 1, overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.poppins(
+                                fontSize: 12, color: Colors.grey)),
                         const SizedBox(height: 8),
                         Row(
                           children: [
@@ -1148,16 +1199,27 @@ class _MyShopTabState extends State<_MyShopTab> {
               ),
             ),
             const SizedBox(height: 24),
+
+            // Stats Row
             Row(
               children: [
-                Expanded(child: _buildStatCard("Total Bookings", "$_totalBookings", Icons.calendar_today)),
+                Expanded(
+                    child: _buildStatCard("Total Bookings", "$_totalBookings",
+                        Icons.calendar_today)),
                 const SizedBox(width: 12),
-                Expanded(child: _buildStatCard("Revenue", "₹${_totalRevenue.toStringAsFixed(0)}", Icons.currency_rupee)),
+                Expanded(
+                    child: _buildStatCard("Revenue",
+                        "₹${_totalRevenue.toStringAsFixed(0)}", Icons.currency_rupee)),
               ],
             ),
+
             const SizedBox(height: 24),
-            Text("Manage", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+            Text("Manage",
+                style: GoogleFonts.poppins(
+                    fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
+
+            // Grid Menu
             GridView.count(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
@@ -1189,7 +1251,10 @@ class _MyShopTabState extends State<_MyShopTab> {
                   title: "Edit Details",
                   color: Colors.green,
                   onTap: () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const BarberShopDetailsPage()))
+                    Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const BarberShopDetailsPage()))
                         .then((_) => _fetchShopData());
                   },
                 ),
@@ -1214,14 +1279,21 @@ class _MyShopTabState extends State<_MyShopTab> {
         children: [
           Icon(icon, size: 20, color: Colors.grey),
           const SizedBox(height: 12),
-          Text(value, style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)),
-          Text(title, style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
+          Text(value,
+              style: GoogleFonts.poppins(
+                  fontSize: 20, fontWeight: FontWeight.bold)),
+          Text(title,
+              style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
         ],
       ),
     );
   }
 
-  Widget _buildMenuCard({required IconData icon, required String title, required Color color, required VoidCallback onTap}) {
+  Widget _buildMenuCard(
+      {required IconData icon,
+        required String title,
+        required Color color,
+        required VoidCallback onTap}) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -1235,11 +1307,14 @@ class _MyShopTabState extends State<_MyShopTab> {
           children: [
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle),
+              decoration: BoxDecoration(
+                  color: color.withOpacity(0.1), shape: BoxShape.circle),
               child: Icon(icon, color: color, size: 24),
             ),
             const SizedBox(height: 12),
-            Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
+            Text(title,
+                style: GoogleFonts.poppins(
+                    fontWeight: FontWeight.w600, fontSize: 14)),
           ],
         ),
       ),
