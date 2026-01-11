@@ -1,7 +1,7 @@
-// lib/owner_home_page.dart
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:intl/intl.dart';
 import 'barber_shop_details_page.dart';
 import 'profile_page.dart';
 
@@ -31,9 +31,10 @@ class _OwnerHomePageState extends State<OwnerHomePage> {
         controller: _pageController,
         physics: const NeverScrollableScrollPhysics(),
         children: const [
-          _DashboardTab(),
-          _MyShopTab(),
-          ProfilePage(),
+          _DashboardTab(),        // 0: Requests
+          _AcceptedBookingsTab(), // 1: Schedule (WITH ADD-ON LOGIC)
+          _MyShopTab(),           // 2: Manage Shop
+          ProfilePage(),          // 3: Profile
         ],
       ),
       bottomNavigationBar: Container(
@@ -57,18 +58,23 @@ class _OwnerHomePageState extends State<OwnerHomePage> {
           type: BottomNavigationBarType.fixed,
           elevation: 0,
           selectedLabelStyle:
-          GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500),
-          unselectedLabelStyle: GoogleFonts.poppins(fontSize: 12),
+          GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.w500),
+          unselectedLabelStyle: GoogleFonts.poppins(fontSize: 10),
           items: const [
             BottomNavigationBarItem(
               icon: Icon(Icons.dashboard_outlined),
               activeIcon: Icon(Icons.dashboard),
-              label: 'Dashboard',
+              label: 'Requests',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.calendar_month_outlined),
+              activeIcon: Icon(Icons.calendar_month),
+              label: 'Schedule',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.store_mall_directory_outlined),
               activeIcon: Icon(Icons.store_mall_directory),
-              label: 'My Shops',
+              label: 'My Shop',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.person_outline),
@@ -83,7 +89,7 @@ class _OwnerHomePageState extends State<OwnerHomePage> {
 }
 
 // =======================================================
-// TAB 1: DASHBOARD
+// TAB 1: DASHBOARD (Incoming Requests)
 // =======================================================
 
 class _DashboardTab extends StatefulWidget {
@@ -96,8 +102,9 @@ class _DashboardTab extends StatefulWidget {
 class _DashboardTabState extends State<_DashboardTab> {
   List<Map<String, dynamic>> _shops = [];
   Map<String, dynamic>? _selectedShop;
-
+  List<Map<String, dynamic>> _bookings = [];
   bool _isLoading = true;
+  bool _isBookingsLoading = false;
   bool _isShopOpen = false;
   final TextEditingController _offerCtrl = TextEditingController();
 
@@ -133,8 +140,9 @@ class _DashboardTabState extends State<_DashboardTab> {
               orElse: () => shops.first,
             );
             _selectShop(updated);
+          } else {
+            _isLoading = false;
           }
-          _isLoading = false;
         });
       }
     } catch (e) {
@@ -145,9 +153,83 @@ class _DashboardTabState extends State<_DashboardTab> {
   void _selectShop(Map<String, dynamic> shop) {
     setState(() {
       _selectedShop = shop;
+      _isLoading = false;
       _isShopOpen = shop['is_open'] ?? false;
       _offerCtrl.text = shop['today_offer'] ?? '';
     });
+    _loadBookingsForShop(shop['id']);
+  }
+
+  Future<void> _loadBookingsForShop(int shopId) async {
+    setState(() => _isBookingsLoading = true);
+
+    try {
+      final bookingsResponse = await Supabase.instance.client
+          .from('bookings')
+          .select()
+          .eq('salon_id', shopId)
+          .eq('status', 'upcoming')
+          .order('booking_date', ascending: true);
+
+      final List<Map<String, dynamic>> rawBookings =
+      List<Map<String, dynamic>>.from(bookingsResponse);
+
+      List<Map<String, dynamic>> mergedBookings = [];
+
+      if (rawBookings.isNotEmpty) {
+        final userIds = rawBookings.map((b) => b['user_id']).toSet().toList();
+
+        final profilesResponse = await Supabase.instance.client
+            .from('profiles')
+            .select()
+            .filter('id', 'in', userIds);
+
+        final List<Map<String, dynamic>> profiles = List<Map<String, dynamic>>.from(profilesResponse);
+
+        mergedBookings = rawBookings.map((booking) {
+          final profile = profiles.firstWhere(
+                (p) => p['id'] == booking['user_id'],
+            orElse: () => <String, dynamic>{},
+          );
+          return {...booking, 'customer': profile};
+        }).toList();
+      }
+
+      if (mounted) {
+        setState(() {
+          _bookings = mergedBookings;
+          _isBookingsLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading bookings: $e');
+      if (mounted) setState(() => _isBookingsLoading = false);
+    }
+  }
+
+  Future<void> _updateBookingStatus(int bookingId, String status) async {
+    try {
+      await Supabase.instance.client
+          .from('bookings')
+          .update({'status': status}).eq('id', bookingId);
+
+      setState(() {
+        _bookings.removeWhere((b) => b['id'] == bookingId);
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(status == 'cancelled' ? 'Request Rejected' : 'Booking Accepted!'),
+          backgroundColor: status == 'cancelled' ? Colors.red : Colors.green,
+          duration: const Duration(seconds: 1),
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Error updating booking")));
+      }
+    }
   }
 
   Future<void> _toggleStatus(bool value) async {
@@ -156,7 +238,6 @@ class _DashboardTabState extends State<_DashboardTab> {
     await Supabase.instance.client
         .from('barber_shops')
         .update({'is_open': value}).eq('id', _selectedShop!['id']);
-    _loadAllShops();
   }
 
   Future<void> _updateOffer() async {
@@ -165,135 +246,126 @@ class _DashboardTabState extends State<_DashboardTab> {
         .from('barber_shops')
         .update({'today_offer': _offerCtrl.text.trim()}).eq(
         'id', _selectedShop!['id']);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Today's offer updated!")));
-    }
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Offer updated!")));
   }
 
-  // --- NEW: Better Bottom Sheet Selector ---
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) return const Center(child: CircularProgressIndicator(color: Colors.orange));
+    if (_shops.isEmpty) return _NoShopWidget(onRefresh: _loadAllShops);
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        title: GestureDetector(
+          onTap: _showShopSelector,
+          child: Row(
+            children: [
+              Text("Requests for: ", style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
+              Text(_selectedShop!['name'], style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 16)),
+              const Icon(Icons.keyboard_arrow_down, color: Colors.orange),
+            ],
+          ),
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _isShopOpen ? Colors.green : Colors.red,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(_isShopOpen ? "SHOP ONLINE" : "SHOP OFFLINE",
+                      style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.bold)),
+                  Switch(value: _isShopOpen, onChanged: _toggleStatus, activeColor: Colors.white),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text("New Requests", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                IconButton(
+                  icon: const Icon(Icons.refresh, color: Colors.orange),
+                  onPressed: () => _loadBookingsForShop(_selectedShop!['id']),
+                )
+              ],
+            ),
+
+            if (_isBookingsLoading)
+              const Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator(color: Colors.orange))
+            else if (_bookings.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(40),
+                child: Column(
+                  children: [
+                    const Icon(Icons.check_circle_outline, size: 50, color: Colors.grey),
+                    const SizedBox(height: 10),
+                    Text("No pending requests", style: GoogleFonts.poppins(color: Colors.grey)),
+                  ],
+                ),
+              )
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: _bookings.length,
+                separatorBuilder: (c, i) => const SizedBox(height: 16),
+                itemBuilder: (context, index) {
+                  final booking = _bookings[index];
+                  return _BookingCard(
+                    booking: booking,
+                    onAccept: () => _updateBookingStatus(booking['id'], 'accepted'),
+                    onReject: () => _updateBookingStatus(booking['id'], 'cancelled'),
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showShopSelector() {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (context) {
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text("Select Shop",
-                    style: GoogleFonts.poppins(
-                        fontSize: 20, fontWeight: FontWeight.bold)),
+                Text("Select Shop", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 16),
-                Flexible(
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: _shops.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) {
-                      final shop = _shops[index];
-                      final isSelected = shop['id'] == _selectedShop?['id'];
-                      final imageUrl =
-                      (shop['image_urls'] != null &&
-                          (shop['image_urls'] as List).isNotEmpty)
-                          ? shop['image_urls'][0]
-                          : '';
-
-                      return GestureDetector(
-                        onTap: () {
-                          _selectShop(shop);
-                          Navigator.pop(context);
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: isSelected
-                                ? Colors.orange.withOpacity(0.05)
-                                : Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                                color: isSelected
-                                    ? Colors.orange
-                                    : Colors.grey[200]!,
-                                width: isSelected ? 1.5 : 1),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 50,
-                                height: 50,
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[200],
-                                  borderRadius: BorderRadius.circular(12),
-                                  image: imageUrl.isNotEmpty
-                                      ? DecorationImage(
-                                      image: NetworkImage(imageUrl),
-                                      fit: BoxFit.cover)
-                                      : null,
-                                ),
-                                child: imageUrl.isEmpty
-                                    ? const Icon(Icons.store, color: Colors.grey)
-                                    : null,
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(shop['name'],
-                                        style: GoogleFonts.poppins(
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 16)),
-                                    Text(
-                                      shop['address'] ?? 'No address',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: GoogleFonts.poppins(
-                                          color: Colors.grey, fontSize: 12),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              if (isSelected)
-                                const Icon(Icons.check_circle,
-                                    color: Colors.orange),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const BarberShopDetailsPage()),
-                      ).then((_) => _loadAllShops());
-                    },
-                    icon: const Icon(Icons.add, color: Colors.orange),
-                    label: Text("Add New Shop",
-                        style: GoogleFonts.poppins(
-                            color: Colors.orange, fontWeight: FontWeight.w600)),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      side: const BorderSide(color: Colors.orange),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
-                    ),
-                  ),
+                ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: _shops.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    final shop = _shops[index];
+                    return ListTile(
+                      title: Text(shop['name']),
+                      selected: shop['id'] == _selectedShop?['id'],
+                      selectedColor: Colors.orange,
+                      onTap: () {
+                        _selectShop(shop);
+                        Navigator.pop(context);
+                      },
+                    );
+                  },
                 ),
               ],
             ),
@@ -302,235 +374,503 @@ class _DashboardTabState extends State<_DashboardTab> {
       },
     );
   }
+}
+
+class _AcceptedBookingsTab extends StatefulWidget {
+  const _AcceptedBookingsTab();
+
+  @override
+  State<_AcceptedBookingsTab> createState() => _AcceptedBookingsTabState();
+}
+
+class _AcceptedBookingsTabState extends State<_AcceptedBookingsTab> {
+  List<Map<String, dynamic>> _acceptedBookings = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchAcceptedBookings();
+  }
+
+  Future<void> _fetchAcceptedBookings() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
+
+    try {
+      final shopsRes = await Supabase.instance.client
+          .from('barber_shops')
+          .select('id')
+          .eq('owner_id', userId);
+
+      final shopIds = (shopsRes as List).map((s) => s['id']).toList();
+
+      if (shopIds.isEmpty) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
+      final response = await Supabase.instance.client
+          .from('bookings')
+          .select('*, barber_shops(name)')
+          .filter('salon_id', 'in', shopIds)
+          .eq('status', 'accepted')
+          .order('booking_date', ascending: true);
+
+      final raw = List<Map<String, dynamic>>.from(response);
+
+      List<Map<String, dynamic>> merged = [];
+      if (raw.isNotEmpty) {
+        final userIds = raw.map((b) => b['user_id']).toSet().toList();
+        final profilesRes = await Supabase.instance.client
+            .from('profiles')
+            .select()
+            .filter('id', 'in', userIds);
+
+        final profiles = List<Map<String, dynamic>>.from(profilesRes);
+
+        merged = raw.map((b) {
+          final profile = profiles
+              .firstWhere((p) => p['id'] == b['user_id'], orElse: () => {});
+          return {...b, 'customer': profile};
+        }).toList();
+      }
+
+      if (mounted) {
+        setState(() {
+          _acceptedBookings = merged;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _updateAddonStatus(int bookingId, List<dynamic> currentAddons,
+      int addonIndex, bool isAccepted) async {
+    currentAddons[addonIndex]['status'] = isAccepted ? 'accepted' : 'rejected';
+
+    await Supabase.instance.client
+        .from('bookings')
+        .update({'addons': currentAddons}).eq('id', bookingId);
+
+    _fetchAcceptedBookings();
+
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(isAccepted ? "Add-on Confirmed" : "Add-on Rejected"),
+      backgroundColor: isAccepted ? Colors.green : Colors.red,
+      behavior: SnackBarBehavior.floating,
+    ));
+  }
+
+  Future<void> _markCompleted(int id) async {
+    await Supabase.instance.client
+        .from('bookings')
+        .update({'status': 'completed'}).eq('id', id);
+    _fetchAcceptedBookings();
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator(color: Colors.orange));
-    }
-    if (_shops.isEmpty) {
-      return _NoShopWidget(onRefresh: _loadAllShops);
-    }
-
-    // Prepare image for selected shop
-    String imageUrl = '';
-    if (_selectedShop != null &&
-        _selectedShop!['image_urls'] != null &&
-        (_selectedShop!['image_urls'] as List).isNotEmpty) {
-      imageUrl = _selectedShop!['image_urls'][0];
-    }
-
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF9FAFB), // Very light grey background
       appBar: AppBar(
         backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: false,
-        title: GestureDetector(
-          onTap: _showShopSelector,
-          child: Row(
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text("Managing Shop",
-                      style: GoogleFonts.poppins(
-                          fontSize: 12, color: Colors.grey)),
-                  Row(
-                    children: [
-                      Text(
-                        _selectedShop!['name'],
-                        style: GoogleFonts.poppins(
-                          color: Colors.black,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 20,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      const Icon(Icons.keyboard_arrow_down,
-                          color: Colors.orange, size: 24),
-                    ],
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
+        title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 1. STATUS CARD
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(20),
+            Text("Schedule",
+                style: GoogleFonts.poppins(
+                    color: Colors.black,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 22)),
+            Text("Upcoming appointments",
+                style: GoogleFonts.poppins(color: Colors.grey, fontSize: 12)),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: Container(
+              padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: _isShopOpen
-                      ? [Colors.green[400]!, Colors.green[700]!]
-                      : [Colors.red[400]!, Colors.red[700]!],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: (_isShopOpen ? Colors.green : Colors.red)
-                        .withOpacity(0.3),
-                    blurRadius: 12,
-                    offset: const Offset(0, 6),
-                  )
-                ],
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        _isShopOpen ? "ONLINE" : "OFFLINE",
-                        style: GoogleFonts.poppins(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1.2,
-                        ),
-                      ),
-                      Switch(
-                        value: _isShopOpen,
-                        activeColor: Colors.white,
-                        activeTrackColor: Colors.white24,
-                        inactiveThumbColor: Colors.white,
-                        inactiveTrackColor: Colors.white24,
-                        onChanged: _toggleStatus,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _isShopOpen
-                        ? "Visible to customers."
-                        : "Customers cannot book.",
-                    style: GoogleFonts.poppins(
-                        color: Colors.white.withOpacity(0.9), fontSize: 13),
-                  ),
-                ],
-              ),
+                  color: Colors.orange.withOpacity(0.1),
+                  shape: BoxShape.circle),
+              child: const Icon(Icons.refresh, color: Colors.orange, size: 20),
             ),
-            const SizedBox(height: 24),
-            // 2. SHOP HEADER MINI
-            Row(
+            onPressed: _fetchAcceptedBookings,
+          ),
+          const SizedBox(width: 10),
+        ],
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: Colors.orange))
+          : _acceptedBookings.isEmpty
+          ? Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.calendar_today_outlined,
+                size: 60, color: Colors.grey[300]),
+            const SizedBox(height: 16),
+            Text("No appointments yet",
+                style: GoogleFonts.poppins(color: Colors.grey)),
+          ],
+        ),
+      )
+          : ListView.separated(
+        padding: const EdgeInsets.all(20),
+        itemCount: _acceptedBookings.length,
+        separatorBuilder: (c, i) => const SizedBox(height: 20),
+        itemBuilder: (context, index) {
+          final booking = _acceptedBookings[index];
+          final customer = booking['customer'] ?? {};
+          final dt =
+          DateTime.parse(booking['booking_date']).toLocal();
+          final dateStr = DateFormat('MMM d').format(dt);
+          final timeStr = DateFormat('h:mm a').format(dt);
+          final String fullName = customer['full_name'] ?? 'Guest';
+          final String initials = fullName.isNotEmpty
+              ? fullName.substring(0, 1).toUpperCase()
+              : 'C';
+
+          final List<dynamic> addons = booking['addons'] != null
+              ? List.from(booking['addons'])
+              : [];
+
+          // Check if any addon is pending
+          final bool hasPendingAddon =
+          addons.any((a) => a['status'] == 'pending');
+
+          return Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.06),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                )
+              ],
+            ),
+            child: Column(
               children: [
-                Container(
-                  width: 60,
-                  height: 60,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(15),
-                    image: imageUrl.isNotEmpty
-                        ? DecorationImage(
-                        image: NetworkImage(imageUrl), fit: BoxFit.cover)
-                        : null,
+                // --- 1. HEADER: Time & Status ---
+                if (hasPendingAddon)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 8, horizontal: 16),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFFFEBD4), // Soft Orange
+                      borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(24)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.notifications_active,
+                            color: Colors.orange, size: 16),
+                        const SizedBox(width: 8),
+                        Text(
+                          "New Add-on Requested",
+                          style: GoogleFonts.poppins(
+                            color: Colors.orange[900],
+                            fontWeight: FontWeight.w600,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  child: imageUrl.isEmpty
-                      ? const Icon(Icons.store, color: Colors.grey)
-                      : null,
-                ),
-                const SizedBox(width: 16),
-                Expanded(
+
+                Padding(
+                  padding: const EdgeInsets.all(20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(_selectedShop!['name'],
-                          style: GoogleFonts.poppins(
-                              fontSize: 18, fontWeight: FontWeight.bold)),
+                      // --- 2. CUSTOMER INFO ROW ---
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(Icons.star, size: 14, color: Colors.amber),
-                          Text(" ${(_selectedShop!['rating'] ?? 0).toString()}",
-                              style: const TextStyle(fontWeight: FontWeight.w600)),
-                          const SizedBox(width: 10),
-                          const Icon(Icons.location_on,
-                              size: 14, color: Colors.grey),
-                          Expanded(
-                            child: Text(
-                              " ${_selectedShop!['address']}",
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  fontSize: 12, color: Colors.grey),
+                          // Avatar
+                          Container(
+                            width: 50,
+                            height: 50,
+                            decoration: BoxDecoration(
+                              color: Colors.grey[900],
+                              borderRadius: BorderRadius.circular(16),
                             ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              initials,
+                              style: GoogleFonts.poppins(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 20),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          // Name & Service
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  fullName,
+                                  style: GoogleFonts.poppins(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 16,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  booking['service_name'],
+                                  style: GoogleFonts.poppins(
+                                    color: Colors.grey[600],
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          // Time Pill
+                          Column(
+                            crossAxisAlignment:
+                            CrossAxisAlignment.end,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue[50],
+                                  borderRadius:
+                                  BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  timeStr,
+                                  style: GoogleFonts.poppins(
+                                    color: Colors.blue[700],
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(dateStr,
+                                  style: GoogleFonts.poppins(
+                                      color: Colors.grey,
+                                      fontSize: 11)),
+                            ],
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      // --- 3. ADD-ONS SECTION (Modernized) ---
+                      if (addons.isNotEmpty)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 20),
+                          decoration: BoxDecoration(
+                            color: Colors.grey[50],
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                                color: Colors.grey[200]!),
+                          ),
+                          child: Column(
+                            children: addons
+                                .asMap()
+                                .entries
+                                .map((entry) {
+                              int idx = entry.key;
+                              Map addon = entry.value;
+                              bool isPending =
+                                  addon['status'] == 'pending';
+                              bool isLast =
+                                  idx == addons.length - 1;
+
+                              return Column(
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Row(
+                                      children: [
+                                        // Icon representing "extra"
+                                        Container(
+                                          padding:
+                                          const EdgeInsets.all(8),
+                                          decoration: BoxDecoration(
+                                              color: Colors.white,
+                                              shape: BoxShape.circle,
+                                              border: Border.all(
+                                                  color: Colors.grey[
+                                                  200]!)),
+                                          child: const Icon(
+                                              Icons.add_link,
+                                              size: 16,
+                                              color: Colors.black),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                            CrossAxisAlignment
+                                                .start,
+                                            children: [
+                                              Text(addon['name'],
+                                                  style: GoogleFonts.poppins(
+                                                      fontWeight:
+                                                      FontWeight
+                                                          .w600,
+                                                      fontSize: 13)),
+                                              Text(
+                                                  "+₹${addon['price']}",
+                                                  style: GoogleFonts.poppins(
+                                                      fontSize: 11,
+                                                      color: Colors
+                                                          .grey)),
+                                            ],
+                                          ),
+                                        ),
+                                        // Actions
+                                        if (isPending) ...[
+                                          _buildModernActionButton(
+                                            icon: Icons.close,
+                                            color: Colors.red,
+                                            onTap: () =>
+                                                _updateAddonStatus(
+                                                    booking['id'],
+                                                    addons,
+                                                    idx,
+                                                    false),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          _buildModernActionButton(
+                                            icon: Icons.check,
+                                            color: Colors.green,
+                                            onTap: () =>
+                                                _updateAddonStatus(
+                                                    booking['id'],
+                                                    addons,
+                                                    idx,
+                                                    true),
+                                          ),
+                                        ] else
+                                          _buildStatusBadge(
+                                              addon['status']),
+                                      ],
+                                    ),
+                                  ),
+                                  if (!isLast)
+                                    Divider(
+                                        height: 1,
+                                        color: Colors.grey[200]),
+                                ],
+                              );
+                            }).toList(),
+                          ),
+                        ),
+
+                      // --- 4. FOOTER: Total & Complete ---
+                      Row(
+                        mainAxisAlignment:
+                        MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                            children: [
+                              Text("Total Payment",
+                                  style: GoogleFonts.poppins(
+                                      color: Colors.grey,
+                                      fontSize: 11)),
+                              Text(
+                                  "₹${(booking['price'] as num).toDouble().toStringAsFixed(0)}",
+                                  style: GoogleFonts.poppins(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 20)),
+                            ],
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: () =>
+                                _markCompleted(booking['id']),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.black,
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius:
+                                BorderRadius.circular(12),
+                              ),
+                            ),
+                            icon: const Icon(Icons.check_circle,
+                                size: 18, color: Colors.white),
+                            label: Text("Complete",
+                                style: GoogleFonts.poppins(
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white)),
                           ),
                         ],
                       )
                     ],
                   ),
-                )
+                ),
               ],
             ),
-            const SizedBox(height: 24),
-            // 3. MARKETING SECTION
-            Text("Marketing",
-                style: GoogleFonts.poppins(
-                    fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.grey[200]!),
-                boxShadow: [
-                  BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10)
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.local_offer,
-                          color: Colors.orange, size: 20),
-                      const SizedBox(width: 8),
-                      Text("Today's Special Offer",
-                          style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _offerCtrl,
-                    decoration: InputDecoration(
-                      hintText: "e.g., 50% off on first haircut...",
-                      filled: true,
-                      fillColor: Colors.grey[50],
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide.none),
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 12),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _updateOffer,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange,
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                      child: Text("Update Offer",
-                          style: GoogleFonts.poppins(
-                              color: Colors.white, fontWeight: FontWeight.w600)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+          );
+        },
+      ),
+    );
+  }
+
+  // --- Helper Widget: Modern Action Button (Square with Soft Background) ---
+  Widget _buildModernActionButton(
+      {required IconData icon,
+        required Color color,
+        required VoidCallback onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: color, size: 20),
+      ),
+    );
+  }
+
+  // --- Helper Widget: Status Badge for Processed Addons ---
+  Widget _buildStatusBadge(String status) {
+    bool accepted = status == 'accepted';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: accepted
+            ? Colors.green.withOpacity(0.1)
+            : Colors.red.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+            color: accepted
+                ? Colors.green.withOpacity(0.2)
+                : Colors.red.withOpacity(0.2)),
+      ),
+      child: Text(
+        accepted ? "ADDED" : "REJECTED",
+        style: GoogleFonts.poppins(
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+          color: accepted ? Colors.green[700] : Colors.red[700],
         ),
       ),
     );
@@ -538,7 +878,120 @@ class _DashboardTabState extends State<_DashboardTab> {
 }
 
 // =======================================================
-// TAB 2: MY SHOP (Services, Staff, Settings) - Multi Shop
+// WIDGET: BOOKING CARD (Dashboard Requests)
+// =======================================================
+
+class _BookingCard extends StatelessWidget {
+  final Map<String, dynamic> booking;
+  final VoidCallback onAccept;
+  final VoidCallback onReject;
+
+  const _BookingCard({
+    required this.booking,
+    required this.onAccept,
+    required this.onReject,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final customer = booking['customer'] ?? {};
+    final String fullName = customer['full_name'] ?? 'Guest';
+    final String phone = customer['phone'] ?? 'N/A';
+    final String initials = fullName.isNotEmpty ? fullName[0].toUpperCase() : 'C';
+
+    final String serviceName = booking['service_name'];
+    final double price = (booking['price'] as num).toDouble();
+    final DateTime dt = DateTime.parse(booking['booking_date']).toLocal();
+    final String dateStr = DateFormat('MMM d, h:mm a').format(dt);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 15, offset: const Offset(0, 5))
+        ],
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.08),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(serviceName, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 16)),
+                    Row(
+                      children: [
+                        const Icon(Icons.access_time, size: 14, color: Colors.orange),
+                        const SizedBox(width: 4),
+                        Text(dateStr, style: GoogleFonts.poppins(color: Colors.orange[800], fontWeight: FontWeight.w600, fontSize: 13)),
+                      ],
+                    )
+                  ],
+                ),
+                Text("₹${price.toStringAsFixed(0)}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 18)),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    CircleAvatar(backgroundColor: Colors.grey[800], child: Text(initials, style: const TextStyle(color: Colors.white))),
+                    const SizedBox(width: 14),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(fullName, style: GoogleFonts.poppins(fontWeight: FontWeight.bold, fontSize: 15)),
+                        Text(phone, style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: onReject,
+                        style: OutlinedButton.styleFrom(
+                          side: BorderSide(color: Colors.red[200]!),
+                          backgroundColor: Colors.red[50],
+                        ),
+                        child: Text("Reject", style: GoogleFonts.poppins(color: Colors.red)),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: onAccept,
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.black),
+                        child: Text("Accept", style: GoogleFonts.poppins(color: Colors.white)),
+                      ),
+                    ),
+                  ],
+                )
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// =======================================================
+// TAB 3: MY SHOP (Connected to Supabase)
 // =======================================================
 
 class _MyShopTab extends StatefulWidget {
@@ -549,247 +1002,78 @@ class _MyShopTab extends StatefulWidget {
 }
 
 class _MyShopTabState extends State<_MyShopTab> {
-  List<Map<String, dynamic>> _shops = [];
-  Map<String, dynamic>? _selectedShop;
-
-  List<Map<String, dynamic>> _services = [];
-  List<Map<String, dynamic>> _staff = [];
+  Map<String, dynamic>? _shopData;
   bool _isLoading = true;
+  int _totalBookings = 0;
+  double _totalRevenue = 0.0;
 
   @override
   void initState() {
     super.initState();
-    _loadAllShopsAndDetails();
+    _fetchShopData();
   }
 
-  Future<void> _loadAllShopsAndDetails() async {
-    setState(() => _isLoading = true);
+  Future<void> _fetchShopData() async {
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (userId == null) return;
 
     try {
-      final shopsResponse = await Supabase.instance.client
+      final shopResponse = await Supabase.instance.client
           .from('barber_shops')
           .select()
           .eq('owner_id', userId)
-          .order('created_at');
+          .order('created_at')
+          .limit(1)
+          .single();
 
-      final List<Map<String, dynamic>> shops =
-      List<Map<String, dynamic>>.from(shopsResponse);
+      final shopId = shopResponse['id'];
+
+      final bookingsResponse = await Supabase.instance.client
+          .from('bookings')
+          .select('price')
+          .eq('salon_id', shopId)
+          .neq('status', 'cancelled');
+
+      final List<dynamic> bookingsList = bookingsResponse;
+      int count = bookingsList.length;
+      double revenue = 0.0;
+
+      for (var b in bookingsList) {
+        revenue += (b['price'] as num).toDouble();
+      }
 
       if (mounted) {
         setState(() {
-          _shops = shops;
-          if (_shops.isNotEmpty) {
-            if (_selectedShop == null) {
-              _selectedShop = shops.first;
-            } else {
-              _selectedShop = shops.firstWhere(
-                      (s) => s['id'] == _selectedShop!['id'],
-                  orElse: () => shops.first);
-            }
-          }
-        });
-      }
-
-      if (_selectedShop != null) {
-        await _fetchDetailsForShop(_selectedShop!['id']);
-      } else {
-        setState(() => _isLoading = false);
-      }
-    } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _fetchDetailsForShop(int shopId) async {
-    try {
-      final services = await Supabase.instance.client
-          .from('services')
-          .select()
-          .eq('salon_id', shopId);
-
-      final staff = await Supabase.instance.client
-          .from('staff')
-          .select()
-          .eq('salon_id', shopId);
-
-      if (mounted) {
-        setState(() {
-          _services = List<Map<String, dynamic>>.from(services);
-          _staff = List<Map<String, dynamic>>.from(staff);
+          _shopData = shopResponse;
+          _totalBookings = count;
+          _totalRevenue = revenue;
           _isLoading = false;
         });
       }
     } catch (e) {
+      debugPrint("Error loading shop data: $e");
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // --- NEW: Better Bottom Sheet Selector for Tab 2 ---
-  void _showShopSelector() {
+  void _openServiceManager(BuildContext context, int shopId) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text("Select Shop to Edit",
-                    style: GoogleFonts.poppins(
-                        fontSize: 20, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 16),
-                Flexible(
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: _shops.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) {
-                      final shop = _shops[index];
-                      final isSelected = shop['id'] == _selectedShop?['id'];
-                      final imageUrl =
-                      (shop['image_urls'] != null &&
-                          (shop['image_urls'] as List).isNotEmpty)
-                          ? shop['image_urls'][0]
-                          : '';
-
-                      return GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _selectedShop = shop;
-                            _isLoading = true;
-                          });
-                          Navigator.pop(context);
-                          _fetchDetailsForShop(shop['id']);
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: isSelected
-                                ? Colors.orange.withOpacity(0.05)
-                                : Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                                color: isSelected
-                                    ? Colors.orange
-                                    : Colors.grey[200]!,
-                                width: isSelected ? 1.5 : 1),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 50,
-                                height: 50,
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[200],
-                                  borderRadius: BorderRadius.circular(12),
-                                  image: imageUrl.isNotEmpty
-                                      ? DecorationImage(
-                                      image: NetworkImage(imageUrl),
-                                      fit: BoxFit.cover)
-                                      : null,
-                                ),
-                                child: imageUrl.isEmpty
-                                    ? const Icon(Icons.store, color: Colors.grey)
-                                    : null,
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(shop['name'],
-                                        style: GoogleFonts.poppins(
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 16)),
-                                    Text(
-                                      shop['address'] ?? 'No address',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: GoogleFonts.poppins(
-                                          color: Colors.grey, fontSize: 12),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              if (isSelected)
-                                const Icon(Icons.check_circle,
-                                    color: Colors.orange),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const BarberShopDetailsPage()),
-                      ).then((_) => _loadAllShopsAndDetails());
-                    },
-                    icon: const Icon(Icons.add, color: Colors.orange),
-                    label: Text("Add New Shop",
-                        style: GoogleFonts.poppins(
-                            color: Colors.orange, fontWeight: FontWeight.w600)),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      side: const BorderSide(color: Colors.orange),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16)),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) => _ManageServicesSheet(shopId: shopId),
     );
   }
 
-  // --- CRUD FUNCTIONS ---
-  Future<void> _addService(String name, String price) async {
-    if (_selectedShop == null) return;
-    await Supabase.instance.client.from('services').insert({
-      'salon_id': _selectedShop!['id'],
-      'name': name,
-      'price': double.tryParse(price) ?? 0.0,
-    });
-    _fetchDetailsForShop(_selectedShop!['id']);
-  }
-
-  Future<void> _deleteService(int id) async {
-    await Supabase.instance.client.from('services').delete().eq('id', id);
-    _fetchDetailsForShop(_selectedShop!['id']);
-  }
-
-  Future<void> _addStaff(String name, String specialty) async {
-    if (_selectedShop == null) return;
-    await Supabase.instance.client.from('staff').insert({
-      'salon_id': _selectedShop!['id'],
-      'name': name,
-      'specialty': specialty,
-    });
-    _fetchDetailsForShop(_selectedShop!['id']);
-  }
-
-  Future<void> _deleteStaff(int id) async {
-    await Supabase.instance.client.from('staff').delete().eq('id', id);
-    _fetchDetailsForShop(_selectedShop!['id']);
+  void _openStaffManager(BuildContext context, int shopId) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) => _ManageStaffSheet(shopId: shopId),
+    );
   }
 
   @override
@@ -797,297 +1081,334 @@ class _MyShopTabState extends State<_MyShopTab> {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator(color: Colors.orange));
     }
-    if (_shops.isEmpty) {
-      return _NoShopWidget(onRefresh: _loadAllShopsAndDetails);
+
+    if (_shopData == null) {
+      return _NoShopWidget(onRefresh: _fetchShopData);
+    }
+
+    String imageUrl = '';
+    if (_shopData!['image_urls'] != null && (_shopData!['image_urls'] as List).isNotEmpty) {
+      imageUrl = _shopData!['image_urls'][0];
     }
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        centerTitle: false,
-        title: GestureDetector(
-          onTap: _showShopSelector,
-          child: Row(
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        _selectedShop!['name'],
-                        style: GoogleFonts.poppins(
-                          color: Colors.black,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 20,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      const Icon(Icons.keyboard_arrow_down,
-                          color: Colors.orange, size: 24),
-                    ],
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.edit_outlined, color: Colors.black),
-            onPressed: () {
-              Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => const BarberShopDetailsPage()))
-                  .then((_) => _loadAllShopsAndDetails());
-            },
-          )
-        ],
+        title: Text("My Shop", style: GoogleFonts.poppins(color: Colors.black, fontWeight: FontWeight.bold)),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            _buildSectionHeader(
-                "Services",
-                "Manage price list for ${_selectedShop!['name']}",
-                Icons.add,
-                    () => _showAddServiceDialog(context)),
-            const SizedBox(height: 16),
-            if (_services.isEmpty) _buildEmptyState("No services added yet"),
-            ..._services.map((s) => _buildServiceTile(s)),
-            const SizedBox(height: 32),
-            _buildSectionHeader(
-                "Staff Members",
-                "Manage team for ${_selectedShop!['name']}",
-                Icons.person_add,
-                    () => _showAddStaffDialog(context)),
-            const SizedBox(height: 16),
-            if (_staff.isEmpty) _buildEmptyState("No staff added yet"),
-            ..._staff.map((s) => _buildStaffTile(s)),
-            const SizedBox(height: 80),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // --- REUSED WIDGETS ---
-  Widget _buildSectionHeader(
-      String title, String subtitle, IconData icon, VoidCallback onAdd) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title,
-                  style: GoogleFonts.poppins(
-                      fontSize: 18, fontWeight: FontWeight.bold)),
-              Text(subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
-            ],
-          ),
-        ),
-        ElevatedButton(
-          onPressed: onAdd,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.orange.withOpacity(0.1),
-            elevation: 0,
-            shape: const CircleBorder(),
-            padding: const EdgeInsets.all(12),
-          ),
-          child: Icon(icon, color: Colors.orange),
-        )
-      ],
-    );
-  }
-
-  Widget _buildEmptyState(String text) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[200]!),
-      ),
-      child: Center(
-          child: Text(text, style: const TextStyle(color: Colors.grey))),
-    );
-  }
-
-  Widget _buildServiceTile(Map<String, dynamic> service) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey[100]!),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.02),
-              blurRadius: 8,
-              offset: const Offset(0, 2))
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(10)),
-            child:
-            const Icon(Icons.content_cut, color: Colors.orange, size: 20),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Text(service['name'],
-                style: GoogleFonts.poppins(
-                    fontWeight: FontWeight.w600, fontSize: 16)),
-          ),
-          Text("₹${service['price']}",
-              style: GoogleFonts.poppins(
-                  fontWeight: FontWeight.bold, color: Colors.green)),
-          const SizedBox(width: 8),
-          IconButton(
-            icon: const Icon(Icons.delete_outline, color: Colors.red),
-            onPressed: () => _deleteService(service['id']),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStaffTile(Map<String, dynamic> staff) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey[100]!),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withOpacity(0.02),
-              blurRadius: 8,
-              offset: const Offset(0, 2))
-        ],
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            backgroundColor: Colors.blue.withOpacity(0.1),
-            child: Text(staff['name'][0].toUpperCase(),
-                style: const TextStyle(
-                    color: Colors.blue, fontWeight: FontWeight.bold)),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 70, height: 70,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(15),
+                      image: imageUrl.isNotEmpty
+                          ? DecorationImage(image: NetworkImage(imageUrl), fit: BoxFit.cover)
+                          : null,
+                    ),
+                    child: imageUrl.isEmpty ? const Icon(Icons.store, size: 30, color: Colors.grey) : null,
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(_shopData!['name'],
+                            style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 4),
+                        Text(_shopData!['address'] ?? 'No Address',
+                            maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            const Icon(Icons.star, size: 14, color: Colors.amber),
+                            Text(" ${_shopData!['rating'] ?? 0.0}",
+                                style: const TextStyle(fontWeight: FontWeight.bold)),
+                          ],
+                        )
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
               children: [
-                Text(staff['name'],
-                    style: GoogleFonts.poppins(
-                        fontWeight: FontWeight.w600, fontSize: 16)),
-                Text(staff['specialty'] ?? 'Staff',
-                    style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                Expanded(child: _buildStatCard("Total Bookings", "$_totalBookings", Icons.calendar_today)),
+                const SizedBox(width: 12),
+                Expanded(child: _buildStatCard("Revenue", "₹${_totalRevenue.toStringAsFixed(0)}", Icons.currency_rupee)),
               ],
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline, color: Colors.red),
-            onPressed: () => _deleteStaff(staff['id']),
-          ),
+            const SizedBox(height: 24),
+            Text("Manage", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 2,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 1.5,
+              children: [
+                _buildMenuCard(
+                  icon: Icons.content_cut,
+                  title: "Services",
+                  color: Colors.blue,
+                  onTap: () => _openServiceManager(context, _shopData!['id']),
+                ),
+                _buildMenuCard(
+                  icon: Icons.people_outline,
+                  title: "Staff",
+                  color: Colors.purple,
+                  onTap: () => _openStaffManager(context, _shopData!['id']),
+                ),
+                _buildMenuCard(
+                  icon: Icons.access_time,
+                  title: "Opening Hours",
+                  color: Colors.orange,
+                  onTap: () {},
+                ),
+                _buildMenuCard(
+                  icon: Icons.edit,
+                  title: "Edit Details",
+                  color: Colors.green,
+                  onTap: () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const BarberShopDetailsPage()))
+                        .then((_) => _fetchShopData());
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatCard(String title, String value, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: Colors.grey),
+          const SizedBox(height: 12),
+          Text(value, style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.bold)),
+          Text(title, style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey)),
         ],
       ),
     );
   }
 
-  void _showAddServiceDialog(BuildContext context) {
-    final nameCtrl = TextEditingController();
-    final priceCtrl = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Add Service"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
+  Widget _buildMenuCard({required IconData icon, required String title, required Color color, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey[200]!),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(labelText: "Service Name")),
-            TextField(
-                controller: priceCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: "Price")),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle),
+              child: Icon(icon, color: color, size: 24),
+            ),
+            const SizedBox(height: 12),
+            Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 14)),
           ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
-          ElevatedButton(
-            onPressed: () {
-              if (nameCtrl.text.isNotEmpty && priceCtrl.text.isNotEmpty) {
-                _addService(nameCtrl.text.trim(), priceCtrl.text.trim());
-                Navigator.pop(context);
-              }
-            },
-            child: const Text("Add"),
-          )
-        ],
-      ),
-    );
-  }
-
-  void _showAddStaffDialog(BuildContext context) {
-    final nameCtrl = TextEditingController();
-    final roleCtrl = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Add Staff"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(labelText: "Name")),
-            TextField(
-                controller: roleCtrl,
-                decoration: const InputDecoration(
-                    labelText: "Specialty (e.g. Barber)")),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
-          ElevatedButton(
-            onPressed: () {
-              if (nameCtrl.text.isNotEmpty) {
-                _addStaff(nameCtrl.text.trim(), roleCtrl.text.trim());
-                Navigator.pop(context);
-              }
-            },
-            child: const Text("Add"),
-          )
-        ],
       ),
     );
   }
 }
 
-// =======================================================
-// HELPER: NO SHOP WIDGET
-// =======================================================
+// --- HELPER SHEET 1: MANAGE SERVICES ---
+class _ManageServicesSheet extends StatefulWidget {
+  final int shopId;
+  const _ManageServicesSheet({required this.shopId});
+
+  @override
+  State<_ManageServicesSheet> createState() => _ManageServicesSheetState();
+}
+
+class _ManageServicesSheetState extends State<_ManageServicesSheet> {
+  List<Map<String, dynamic>> _services = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetch();
+  }
+
+  Future<void> _fetch() async {
+    final res = await Supabase.instance.client.from('services').select().eq('salon_id', widget.shopId);
+    if(mounted) setState(() { _services = List<Map<String, dynamic>>.from(res); _isLoading = false; });
+  }
+
+  Future<void> _addService(String name, String price) async {
+    await Supabase.instance.client.from('services').insert({
+      'salon_id': widget.shopId,
+      'name': name,
+      'price': double.tryParse(price) ?? 0.0,
+    });
+    _fetch();
+    if(mounted) Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.7,
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Text("Manage Services", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+            IconButton(icon: const Icon(Icons.add, color: Colors.orange), onPressed: _showAddDialog)
+          ]),
+          const Divider(),
+          Expanded(
+            child: _isLoading ? const Center(child: CircularProgressIndicator()) : ListView.builder(
+              itemCount: _services.length,
+              itemBuilder: (c, i) {
+                final s = _services[i];
+                return ListTile(
+                  title: Text(s['name']),
+                  trailing: Text("₹${s['price']}", style: const TextStyle(fontWeight: FontWeight.bold)),
+                  leading: const Icon(Icons.content_cut, size: 18, color: Colors.grey),
+                );
+              },
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  void _showAddDialog() {
+    final nCtrl = TextEditingController();
+    final pCtrl = TextEditingController();
+    showDialog(context: context, builder: (_) => AlertDialog(
+      title: const Text("Add Service"),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        TextField(controller: nCtrl, decoration: const InputDecoration(labelText: "Service Name")),
+        TextField(controller: pCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Price")),
+      ]),
+      actions: [
+        TextButton(onPressed: ()=>Navigator.pop(context), child: const Text("Cancel")),
+        ElevatedButton(onPressed: () => _addService(nCtrl.text, pCtrl.text), child: const Text("Add")),
+      ],
+    ));
+  }
+}
+
+// --- HELPER SHEET 2: MANAGE STAFF ---
+class _ManageStaffSheet extends StatefulWidget {
+  final int shopId;
+  const _ManageStaffSheet({required this.shopId});
+
+  @override
+  State<_ManageStaffSheet> createState() => _ManageStaffSheetState();
+}
+
+class _ManageStaffSheetState extends State<_ManageStaffSheet> {
+  List<Map<String, dynamic>> _staff = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetch();
+  }
+
+  Future<void> _fetch() async {
+    final res = await Supabase.instance.client.from('staff').select().eq('salon_id', widget.shopId);
+    if(mounted) setState(() { _staff = List<Map<String, dynamic>>.from(res); _isLoading = false; });
+  }
+
+  Future<void> _addStaff(String name, String role) async {
+    await Supabase.instance.client.from('staff').insert({
+      'salon_id': widget.shopId,
+      'name': name,
+      'specialty': role,
+    });
+    _fetch();
+    if(mounted) Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.7,
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Text("Manage Staff", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+            IconButton(icon: const Icon(Icons.add, color: Colors.purple), onPressed: _showAddDialog)
+          ]),
+          const Divider(),
+          Expanded(
+            child: _isLoading ? const Center(child: CircularProgressIndicator()) : ListView.builder(
+              itemCount: _staff.length,
+              itemBuilder: (c, i) {
+                final s = _staff[i];
+                return ListTile(
+                  title: Text(s['name']),
+                  subtitle: Text(s['specialty'] ?? 'Staff'),
+                  leading: CircleAvatar(child: Text(s['name'][0])),
+                );
+              },
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  void _showAddDialog() {
+    final nCtrl = TextEditingController();
+    final rCtrl = TextEditingController();
+    showDialog(context: context, builder: (_) => AlertDialog(
+      title: const Text("Add Staff"),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        TextField(controller: nCtrl, decoration: const InputDecoration(labelText: "Staff Name")),
+        TextField(controller: rCtrl, decoration: const InputDecoration(labelText: "Specialty (e.g. Barber)")),
+      ]),
+      actions: [
+        TextButton(onPressed: ()=>Navigator.pop(context), child: const Text("Cancel")),
+        ElevatedButton(onPressed: () => _addStaff(nCtrl.text, rCtrl.text), child: const Text("Add")),
+      ],
+    ));
+  }
+}
+
 class _NoShopWidget extends StatelessWidget {
   final VoidCallback onRefresh;
   const _NoShopWidget({required this.onRefresh});
@@ -1098,23 +1419,16 @@ class _NoShopWidget extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.store_mall_directory_outlined,
-              size: 80, color: Colors.grey),
+          const Icon(Icons.store_mall_directory_outlined, size: 80, color: Colors.grey),
           const SizedBox(height: 16),
-          Text("You haven't created a shop yet",
-              style: GoogleFonts.poppins(color: Colors.grey)),
+          Text("You haven't created a shop yet", style: GoogleFonts.poppins(color: Colors.grey)),
           const SizedBox(height: 20),
           ElevatedButton(
             onPressed: () {
-              Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => const BarberShopDetailsPage()))
-                  .then((_) => onRefresh());
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const BarberShopDetailsPage())).then((_) => onRefresh());
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
-            child: const Text("Create My First Shop",
-                style: TextStyle(color: Colors.white)),
+            child: const Text("Create My First Shop", style: TextStyle(color: Colors.white)),
           )
         ],
       ),

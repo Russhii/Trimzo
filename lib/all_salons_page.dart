@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'salon_details_page.dart'; // Import the details page
 
 class AllSalonsPage extends StatelessWidget {
   const AllSalonsPage({super.key});
@@ -21,31 +22,25 @@ class AllSalonsPage extends StatelessWidget {
         ),
       ),
       body: FutureBuilder<List<Map<String, dynamic>>>(
-        // FIX 1: Changed table name from 'salons' to 'barber_shops'
         future: Supabase.instance.client
             .from('barber_shops')
             .select()
             .order('created_at', ascending: false),
         builder: (context, snapshot) {
-          // 1. Loading State
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator(color: Colors.orange));
           }
 
-          // 2. Error State
           if (snapshot.hasError) {
             return Center(child: Text("Error: ${snapshot.error}"));
           }
 
-          // 3. Data State
           final salons = snapshot.data ?? [];
 
           if (salons.isEmpty) {
             return Center(
-              child: Text(
-                "No salons added yet.",
-                style: GoogleFonts.poppins(color: Colors.grey),
-              ),
+              child: Text("No salons added yet.",
+                  style: GoogleFonts.poppins(color: Colors.grey)),
             );
           }
 
@@ -56,8 +51,7 @@ class AllSalonsPage extends StatelessWidget {
             itemBuilder: (context, index) {
               final salon = salons[index];
 
-              // FIX 2: Handle 'image_urls' array.
-              // We grab the first image if the list exists and isn't empty.
+              // Safe Image Extraction
               String displayImage = '';
               if (salon['image_urls'] != null) {
                 final List images = salon['image_urls'] as List;
@@ -66,14 +60,22 @@ class AllSalonsPage extends StatelessWidget {
                 }
               }
 
-              return _SharedSalonCard(
-                name: salon['name'] ?? 'Unknown Salon',
-                address: salon['address'] ?? 'No address provided',
-                // FIX 3: 'distance' doesn't exist in your DB.
-                // Using 'Nearby' as fallback or you must calculate it using lat/long.
-                distance: 'Nearby',
-                rating: (salon['rating'] as num?)?.toDouble() ?? 0.0,
-                imageUrl: displayImage,
+              return GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => SalonDetailsPage(salon: salon),
+                    ),
+                  );
+                },
+                child: _SharedSalonCard(
+                  name: salon['name'] ?? 'Unknown Salon',
+                  address: salon['address'] ?? 'No address provided',
+                  distance: 'Nearby', // Fallback as DB might not have lat/long calc yet
+                  rating: (salon['rating'] as num?)?.toDouble() ?? 0.0,
+                  imageUrl: displayImage,
+                ),
               );
             },
           );
@@ -83,7 +85,6 @@ class AllSalonsPage extends StatelessWidget {
   }
 }
 
-// Reusable Card Widget (No changes needed here, logic handled above)
 class _SharedSalonCard extends StatelessWidget {
   final String name;
   final String address;
@@ -104,7 +105,7 @@ class _SharedSalonCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.grey[100],
+        color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: Colors.grey[200]!),
         boxShadow: [
@@ -128,7 +129,7 @@ class _SharedSalonCard extends StatelessWidget {
               errorBuilder: (_, __, ___) => Container(
                 width: 90,
                 height: 90,
-                color: Colors.grey[300],
+                color: Colors.grey[100],
                 child: const Icon(Icons.store, color: Colors.grey, size: 40),
               ),
             ),
@@ -169,7 +170,7 @@ class _SharedSalonCard extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: Colors.grey[50],
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: Colors.grey[200]!),
                       ),
