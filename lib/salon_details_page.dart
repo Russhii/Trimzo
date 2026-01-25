@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:intl/intl.dart';
+import 'salon_reviews_page.dart';
 
 class SalonDetailsPage extends StatefulWidget {
   final Map<String, dynamic> salon;
@@ -14,6 +15,39 @@ class SalonDetailsPage extends StatefulWidget {
 }
 
 class _SalonDetailsPageState extends State<SalonDetailsPage> {
+  // --- STATE FOR REVIEWS ---
+  List<Map<String, dynamic>> _reviews = [];
+  bool _isLoadingReviews = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchReviewsPreview();
+  }
+
+  // Fetch only the top 3 latest reviews
+  Future<void> _fetchReviewsPreview() async {
+    try {
+      final response = await Supabase.instance.client
+          .from('reviews')
+          .select('*, profiles(full_name)')
+          .eq('salon_id', widget.salon['id'])
+          .order('created_at', ascending: false)
+          .limit(3);
+
+      final data = List<Map<String, dynamic>>.from(response);
+
+      if (mounted) {
+        setState(() {
+          _reviews = data;
+          _isLoadingReviews = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Error loading reviews: $e");
+      if (mounted) setState(() => _isLoadingReviews = false);
+    }
+  }
 
   // --- ACTION BUTTON LOGIC ---
 
@@ -23,8 +57,9 @@ class _SalonDetailsPageState extends State<SalonDetailsPage> {
 
     if (lat == null || lng == null) {
       final address = widget.salon['address'] ?? '';
-      if(address.isNotEmpty) {
-        final Uri queryUrl = Uri.parse("https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(address)}");
+      if (address.isNotEmpty) {
+        final Uri queryUrl = Uri.parse(
+            "https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(address)}");
         await launchUrl(queryUrl, mode: LaunchMode.externalApplication);
       }
       return;
@@ -42,7 +77,8 @@ class _SalonDetailsPageState extends State<SalonDetailsPage> {
   Future<void> _callShop() async {
     final phone = widget.salon['phone_number'] ?? widget.salon['phone'];
     if (phone == null || phone.toString().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Phone number not available")));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text("Phone number not available")));
       return;
     }
 
@@ -51,7 +87,20 @@ class _SalonDetailsPageState extends State<SalonDetailsPage> {
   }
 
   void _shareSalon() {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Share feature requires share_plus package")));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text("Share feature requires share_plus package")));
+  }
+
+  void _goToReviewsPage() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SalonReviewsPage(
+          salonId: widget.salon['id'],
+          salonName: widget.salon['name'] ?? 'Salon',
+        ),
+      ),
+    ).then((_) => _fetchReviewsPreview());
   }
 
   // --- BOOKING POPUP LOGIC ---
@@ -61,7 +110,7 @@ class _SalonDetailsPageState extends State<SalonDetailsPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => _BookingBottomSheet(salonId: widget.salon['id']),
+      builder: (context) => _BookingBottomSheet(salon: widget.salon),
     );
   }
 
@@ -108,7 +157,9 @@ class _SalonDetailsPageState extends State<SalonDetailsPage> {
               background: Image.network(
                 _displayImage,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(color: Colors.grey[200], child: const Icon(Icons.store, size: 60, color: Colors.grey)),
+                errorBuilder: (_, __, ___) => Container(
+                    color: Colors.grey[200],
+                    child: const Icon(Icons.store, size: 60, color: Colors.grey)),
               ),
             ),
           ),
@@ -118,38 +169,168 @@ class _SalonDetailsPageState extends State<SalonDetailsPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Title & Rating
                   Text(widget.salon['name'] ?? 'Unknown Salon',
-                      style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.w600, color: Colors.black87)),
+                      style: GoogleFonts.poppins(
+                          fontSize: 24, fontWeight: FontWeight.w600, color: Colors.black87)),
                   const SizedBox(height: 8),
                   Row(
                     children: [
                       const Icon(Icons.star, color: Colors.amber, size: 18),
                       const SizedBox(width: 4),
-                      Text("${widget.salon['rating'] ?? '4.5'}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+                      Text("${widget.salon['rating'] ?? '4.5'}",
+                          style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text("•  ${widget.salon['address'] ?? 'No Address'}",
-                            maxLines: 1, overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 13)),
                       ),
                     ],
                   ),
                   const SizedBox(height: 24),
+
+                  // Action Buttons
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
                       _buildActionButton(Icons.directions, "Directions", true, _launchNavigation),
                       _buildActionButton(Icons.call, "Call", false, _callShop),
-                      _buildActionButton(Icons.star_outline, "Reviews", false, () {}),
+                      _buildActionButton(Icons.star_outline, "Reviews", false, _goToReviewsPage),
                       _buildActionButton(Icons.share, "Share", false, _shareSalon),
                     ],
                   ),
                   const Divider(height: 40),
-                  Text("About", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+
+                  // About Section
+                  Text("About",
+                      style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
-                  Text("Experience world-class grooming services at ${widget.salon['name']}. We offer haircuts, shaving, spa treatments and more.",
+                  Text(
+                      "Experience world-class grooming services at ${widget.salon['name']}. We offer haircuts, shaving, spa treatments and more.",
                       style: GoogleFonts.poppins(color: Colors.grey[600], height: 1.5)),
-                  const SizedBox(height: 100),
+                  const Divider(height: 40),
+
+                  // --- REVIEWS SECTION START ---
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text("Reviews",
+                          style:
+                          GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                      TextButton(
+                        onPressed: _goToReviewsPage,
+                        child: Text("See All",
+                            style: GoogleFonts.poppins(
+                                color: Colors.orange, fontWeight: FontWeight.w600)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  if (_isLoadingReviews)
+                    const Center(child: CircularProgressIndicator(color: Colors.orange))
+                  else if (_reviews.isEmpty)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[50],
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        children: [
+                          Icon(Icons.rate_review_outlined, color: Colors.grey[400], size: 40),
+                          const SizedBox(height: 8),
+                          Text("No reviews yet", style: GoogleFonts.poppins(color: Colors.grey)),
+                        ],
+                      ),
+                    )
+                  else
+                    Column(
+                      children: _reviews.map((review) {
+                        final profile = review['profiles'] ?? {};
+                        final name = profile['full_name'] ?? 'Anonymous';
+                        final date = DateTime.parse(review['created_at']);
+                        final rating = review['rating'] as int;
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 16),
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: Colors.grey[100]!),
+                            boxShadow: [
+                              BoxShadow(
+                                  color: Colors.black.withOpacity(0.02),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 4))
+                            ],
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  CircleAvatar(
+                                    radius: 16,
+                                    backgroundColor: Colors.orange.withOpacity(0.1),
+                                    child: Text(name[0].toUpperCase(),
+                                        style: GoogleFonts.poppins(
+                                            color: Colors.orange, fontWeight: FontWeight.bold)),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(name,
+                                            style: GoogleFonts.poppins(
+                                                fontWeight: FontWeight.w600, fontSize: 14)),
+                                        Text(DateFormat('MMM d, yyyy').format(date),
+                                            style: GoogleFonts.poppins(
+                                                fontSize: 11, color: Colors.grey)),
+                                      ],
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                    decoration: BoxDecoration(
+                                        color: Colors.green[50],
+                                        borderRadius: BorderRadius.circular(6)),
+                                    child: Row(
+                                      children: [
+                                        Text("$rating",
+                                            style: GoogleFonts.poppins(
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.green,
+                                                fontSize: 12)),
+                                        const Icon(Icons.star, size: 12, color: Colors.green),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (review['comment'] != null && review['comment'].isNotEmpty) ...[
+                                const SizedBox(height: 10),
+                                Text(
+                                  review['comment'],
+                                  style: GoogleFonts.poppins(color: Colors.black87, fontSize: 13, height: 1.4),
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ]
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ),
+
+                  // --- REVIEWS SECTION END (Removed Write Button) ---
+
+                  const SizedBox(height: 100), // Space for bottom button
                 ],
               ),
             ),
@@ -160,7 +341,12 @@ class _SalonDetailsPageState extends State<SalonDetailsPage> {
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           color: Colors.white,
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -4))],
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+                offset: const Offset(0, -4))
+          ],
         ),
         child: ElevatedButton(
           onPressed: () => _showBookingSheet(context),
@@ -170,7 +356,8 @@ class _SalonDetailsPageState extends State<SalonDetailsPage> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           ),
           child: Text("Book Appointment",
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: Colors.white, fontSize: 16)),
+              style: GoogleFonts.poppins(
+                  fontWeight: FontWeight.w600, color: Colors.white, fontSize: 16)),
         ),
       ),
     );
@@ -197,17 +384,14 @@ class _SalonDetailsPageState extends State<SalonDetailsPage> {
   }
 }
 
-// ==========================================
-// BOOKING BOTTOM SHEET (MULTI-SELECT ENABLED)
-// ==========================================
 
 // ==========================================
-// BOOKING BOTTOM SHEET (WITH PLUS BUTTON)
+// BOOKING BOTTOM SHEET
 // ==========================================
 
 class _BookingBottomSheet extends StatefulWidget {
-  final int salonId;
-  const _BookingBottomSheet({required this.salonId});
+  final Map<String, dynamic> salon;
+  const _BookingBottomSheet({required this.salon});
 
   @override
   State<_BookingBottomSheet> createState() => _BookingBottomSheetState();
@@ -245,7 +429,7 @@ class _BookingBottomSheetState extends State<_BookingBottomSheet> {
       final response = await Supabase.instance.client
           .from('services')
           .select()
-          .eq('salon_id', widget.salonId);
+          .eq('salon_id', widget.salon['id']);
       if (mounted) {
         setState(() {
           _services = List<Map<String, dynamic>>.from(response);
@@ -262,7 +446,7 @@ class _BookingBottomSheetState extends State<_BookingBottomSheet> {
       final response = await Supabase.instance.client
           .from('staff')
           .select()
-          .eq('salon_id', widget.salonId);
+          .eq('salon_id', widget.salon['id']);
       if (mounted) {
         setState(() {
           _staff = List<Map<String, dynamic>>.from(response);
@@ -283,7 +467,7 @@ class _BookingBottomSheetState extends State<_BookingBottomSheet> {
       final response = await Supabase.instance.client
           .from('bookings')
           .select('booking_date')
-          .eq('salon_id', widget.salonId)
+          .eq('salon_id', widget.salon['id'])
           .neq('status', 'cancelled')
           .gte('booking_date', startOfDay.toIso8601String())
           .lte('booking_date', endOfDay.toIso8601String());
@@ -338,14 +522,53 @@ class _BookingBottomSheetState extends State<_BookingBottomSheet> {
         finalServiceName += " (with ${_selectedStaff!['name']})";
       }
 
-      await Supabase.instance.client.from('bookings').insert({
+      final bookingResponse = await Supabase.instance.client.from('bookings').insert({
         'user_id': user.id,
-        'salon_id': widget.salonId,
+        'salon_id': widget.salon['id'],
         'service_name': finalServiceName,
         'price': totalPrice,
         'booking_date': _selectedSlot!.toIso8601String(),
         'status': 'upcoming'
-      });
+      }).select('id').single();
+
+      final int bookingId = bookingResponse['id'];
+
+      // Fetch owner_id
+      var ownerId = widget.salon['owner_id'];
+      if (ownerId == null) {
+        final salonResponse = await Supabase.instance.client
+            .from('barber_shops')
+            .select('owner_id')
+            .eq('id', widget.salon['id'])
+            .single();
+        ownerId = salonResponse['owner_id'];
+      }
+
+      if (ownerId != null) {
+        // 1. Insert into inbox_messages
+        await Supabase.instance.client.from('inbox_messages').insert({
+          'user_id': ownerId,
+          'salon_id': widget.salon['id'],
+          'booking_id': bookingId,
+          'title': 'New Booking Request',
+          'message': 'A customer has requested a booking for $finalServiceName on ${DateFormat('MMM d').format(_selectedSlot!)} at ${DateFormat('h:mm a').format(_selectedSlot!)}. Please review.',
+          'type': 'booking_new',
+          'is_read': false,
+        });
+
+        // 2. Send Push Notification
+        try {
+          await Supabase.instance.client.functions.invoke('send-push-notification', body: {
+            'user_id': ownerId,
+            'title': 'New Booking Request',
+            'body': 'A customer booked $finalServiceName for ${DateFormat('MMM d').format(_selectedSlot!)} at ${DateFormat('h:mm a').format(_selectedSlot!)}',
+            'type': 'booking_new',
+            'booking_id': bookingId,
+          });
+        } catch (e) {
+          debugPrint("Push notification error: $e");
+        }
+      }
 
       if (mounted) {
         Navigator.pop(context);
@@ -406,8 +629,6 @@ class _BookingBottomSheetState extends State<_BookingBottomSheet> {
   @override
   Widget build(BuildContext context) {
     final slots = _generateDailySlots();
-
-    // Calculate total
     double currentTotal = 0;
     for(var s in _selectedServices) {
       currentTotal += (s['price'] as num).toDouble();
@@ -608,8 +829,6 @@ class _BookingBottomSheetState extends State<_BookingBottomSheet> {
                             Text("₹${service['price']}", style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 13)),
                           ],
                         ),
-
-                        // --- THE PLUS BUTTON ---
                         Container(
                           width: 32, height: 32,
                           decoration: BoxDecoration(

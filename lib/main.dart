@@ -2,43 +2,62 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'login_page.dart';
-import 'home_page.dart';
-import 'profile_page.dart';
+import 'home_page.dart'; // Customer Home
+import 'owner_home_page.dart'; // Barber/Owner Home
 import 'fill_profile_page.dart';
 import 'reset_password_page.dart';
-import 'owner_home_page.dart'; // <--- NEW OWNER HOME PAGE
+import 'my_bookings_page.dart';
 
-// 🔑 Global navigator key (REQUIRED for recovery & deep links)
+import 'firebase_options.dart';
+
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ✅ Initialize Supabase
-  await Supabase.initialize(
-    url: 'https://otcqgozalgpmuzhocdlb.supabase.co',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im90Y3Fnb3phbGdwbXV6aG9jZGxiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2MjczODUsImV4cCI6MjA3OTIwMzM4NX0.7VXQbHbkM790MnO6CrNiGEfvN3gZtlE3d7M-24LX4_c',
-  );
+  // 1. Initialize Supabase
+  try {
+    await Supabase.initialize(
+      url: 'https://otcqgozalgpmuzhocdlb.supabase.co',
+      anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im90Y3Fnb3phbGdwbXV6aG9jZGxiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2MjczODUsImV4cCI6MjA3OTIwMzM4NX0.7VXQbHbkM790MnO6CrNiGEfvN3gZtlE3d7M-24LX4_c',
+    );
+  } catch (e) {
+    debugPrint("❌ Supabase initialization failed: $e");
+  }
 
-  // ✅ Listen for auth changes (PASSWORD RECOVERY)
-  Supabase.instance.client.auth.onAuthStateChange.listen((data) {
-    final event = data.event;
-    final session = data.session;
+  // 2. Initialize Firebase
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    debugPrint("❌ Firebase initialization failed: $e");
+  }
 
-    if (event == AuthChangeEvent.passwordRecovery && session != null) {
-      navigatorKey.currentState?.pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const ResetPasswordPage()),
-            (route) => false,
-      );
+  // 3. Setup Notifications
+  final messaging = FirebaseMessaging.instance;
+  await messaging.requestPermission();
+
+  // Save Token silently
+  try {
+    String? token = await messaging.getToken();
+    if (token != null) {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
+        await Supabase.instance.client
+            .from('profiles')
+            .update({'fcm_token': token})
+            .eq('id', user.id);
+      }
     }
-  });
+  } catch (_) {}
 
   runApp(const MyApp());
 }
-
-// ======================= APP ROOT =======================
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -46,29 +65,21 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      navigatorKey: navigatorKey, // 🔑 REQUIRED
+      navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
       title: 'Salon App',
       theme: ThemeData(
         brightness: Brightness.light,
         primaryColor: const Color(0xFFFF6B00),
         scaffoldBackgroundColor: Colors.white,
-        textTheme: GoogleFonts.poppinsTextTheme(
-          ThemeData.light().textTheme,
-        ),
-        colorScheme: ColorScheme.fromSwatch(
-          primarySwatch: Colors.orange,
-        ).copyWith(
-          secondary: const Color(0xFFFF6B00),
-          brightness: Brightness.light,
-        ),
+        textTheme: GoogleFonts.poppinsTextTheme(ThemeData.light().textTheme),
+        colorScheme: ColorScheme.fromSwatch(primarySwatch: Colors.orange)
+            .copyWith(secondary: const Color(0xFFFF6B00)),
       ),
       home: const AuthWrapper(),
     );
   }
 }
-
-// ======================= AUTH WRAPPER =======================
 
 class AuthWrapper extends StatelessWidget {
   const AuthWrapper({super.key});
@@ -78,55 +89,51 @@ class AuthWrapper extends StatelessWidget {
     return StreamBuilder<AuthState>(
       stream: Supabase.instance.client.auth.onAuthStateChange,
       builder: (context, snapshot) {
-        // 1. Loading Auth State
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
-            body: Center(
-              child: CircularProgressIndicator(color: Colors.orange),
-            ),
+            body: Center(child: CircularProgressIndicator(color: Colors.orange)),
           );
         }
 
         final user = snapshot.data?.session?.user;
 
-        // 2. Not Logged In -> Login Page
-        if (user == null || user.email == null || user.email!.isEmpty) {
+        // 1. Not Logged In -> Login Page
+        if (user == null || user.email == null) {
           return const LoginPage();
         }
 
-        // 3. Logged In -> Check Profile & Role
+        // 2. Logged In -> Check Role
         return FutureBuilder(
           future: Supabase.instance.client
               .from('profiles')
-              .select('full_name, role') // <--- FETCH ROLE
+              .select('full_name, user_type')
               .eq('id', user.id)
               .maybeSingle(),
           builder: (context, snap) {
-            // Loading Profile
             if (snap.connectionState == ConnectionState.waiting) {
               return const Scaffold(
-                body: Center(
-                  child: CircularProgressIndicator(color: Colors.orange),
-                ),
+                body: Center(child: CircularProgressIndicator(color: Colors.orange)),
               );
             }
 
             final profile = snap.data as Map<String, dynamic>?;
-            final hasFullName = profile != null && profile['full_name'] != null;
 
-            // 4. Profile not filled -> Fill Profile Page
-            if (!hasFullName) {
+            // 3. Profile Incomplete -> Fill Profile
+            if (profile == null || profile['full_name'] == null) {
               return const FillProfilePage();
             }
 
-            // 5. Check Role -> Redirect accordingly
-            // Default to 'customer' if role is null
-            final String role = profile['role'] ?? 'customer';
+            // 4. Check User Type (Case Insensitive)
+            final String userType = (profile['user_type'] ?? 'Customer').toString().toLowerCase();
 
-            if (role == 'owner') {
-              return const OwnerHomePage(); // <--- Redirect Owner
+            // ✅ REDIRECT LOGIC
+            // Checks for 'barber' OR 'owner' to match your database images
+            if (userType == 'barber' || userType == 'owner') {
+              print("✅ User is Barber/Owner. Going to OwnerHomePage");
+              return const OwnerHomePage();
             } else {
-              return const HomePage(); // <--- Redirect Customer
+              print("👤 User is Customer. Going to HomePage");
+              return const HomePage();
             }
           },
         );

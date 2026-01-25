@@ -6,6 +6,7 @@ import 'home_page.dart';
 import 'signup_page.dart';
 import 'login_page.dart';
 import 'forgot_password_page.dart';
+import 'main.dart'; // <--- IMPORTANT: Import main.dart to access AuthWrapper
 
 class SignInPage extends StatefulWidget {
   const SignInPage({super.key});
@@ -33,18 +34,17 @@ class _SignInPageState extends State<SignInPage> {
       );
 
       if (response.session != null && response.user != null) {
-        // Auto-create/upsert profile
-        await Supabase.instance.client
-            .from('profiles')
-            .upsert({
+        // Auto-create/upsert profile just in case
+        await Supabase.instance.client.from('profiles').upsert({
           'id': response.user!.id,
           'email': response.user!.email,
         }, onConflict: 'id');
 
         if (mounted) {
+          // ✅ FIX: Send user to AuthWrapper to decide if they are Barber or Customer
           Navigator.pushAndRemoveUntil(
             context,
-            MaterialPageRoute(builder: (_) => const HomePage()),
+            MaterialPageRoute(builder: (_) => const AuthWrapper()),
                 (route) => false,
           );
         }
@@ -54,7 +54,7 @@ class _SignInPageState extends State<SignInPage> {
       if (e.message.contains('Invalid login credentials')) {
         message = "Invalid email or password";
       } else if (e.message.contains('Email not confirmed')) {
-        message = "Please confirm your email first. Check your inbox/spam.";
+        message = "Please confirm your email first.";
       } else {
         message = "Login failed: ${e.message}";
       }
@@ -129,7 +129,6 @@ class _SignInPageState extends State<SignInPage> {
               Center(
                 child: GestureDetector(
                   onTap: () {
-                    // This opens your beautiful ForgotPasswordPage
                     Navigator.push(
                       context,
                       MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),

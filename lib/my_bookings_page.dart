@@ -108,7 +108,7 @@ class _BookingListState extends State<BookingList> {
 
       final response = await Supabase.instance.client
           .from('bookings')
-          .select('*, barber_shops(name, image_urls)')
+          .select('*, barber_shops(name, image_urls, owner_id)')
           .eq('user_id', userId)
           .filter('status', 'in', statuses)
           .order('booking_date', ascending: widget.statusFilter == 'upcoming');
@@ -211,6 +211,181 @@ class BookingCard extends StatelessWidget {
     );
   }
 
+  Future<void> _cancelBooking(BuildContext context) async {
+    try {
+      await Supabase.instance.client
+          .from('bookings')
+          .update({'status': 'cancelled'})
+          .eq('id', booking['id']);
+
+      final shopData = booking['barber_shops'] as Map<String, dynamic>? ?? {};
+      final ownerId = shopData['owner_id'];
+      final shopName = shopData['name'] ?? 'Shop';
+
+      if (ownerId != null) {
+        await Supabase.instance.client.from('inbox_messages').insert({
+          'user_id': ownerId,
+          'salon_id': booking['salon_id'],
+          'booking_id': booking['id'],
+          'title': 'Booking Cancelled',
+          'message': 'A customer has cancelled their booking at $shopName.',
+          'type': 'booking_cancelled',
+          'is_read': false,
+        });
+
+        // Send Push Notification
+        try {
+          await Supabase.instance.client.functions.invoke('send-push-notification', body: {
+            'user_id': ownerId,
+            'title': 'Booking Cancelled',
+            'body': 'The customer has cancelled the booking.',
+            'type': 'booking_cancelled',
+            'booking_id': booking['id'],
+          });
+        } catch (e) {
+          debugPrint("Push notification error: $e");
+        }
+      }
+
+      onUpdate();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Booking cancelled")),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e")),
+      );
+    }
+  }
+
+  void _showCancelDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Cancel Booking?"),
+        content: const Text("Are you sure you want to cancel this booking?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("No")),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _cancelBooking(context);
+            },
+            child: const Text("Yes, Cancel", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _rescheduleBooking(BuildContext context, DateTime newDate, String reason) async {
+    try {
+      await Supabase.instance.client.from('bookings').update({
+        'reschedule_requested': true,
+        'reschedule_date': newDate.toIso8601String(),
+        'reschedule_reason': reason,
+      }).eq('id', booking['id']);
+
+      final shopData = booking['barber_shops'] as Map<String, dynamic>? ?? {};
+      final ownerId = shopData['owner_id'];
+      final shopName = shopData['name'] ?? 'Shop';
+
+      if (ownerId != null) {
+        await Supabase.instance.client.from('inbox_messages').insert({
+          'user_id': ownerId,
+          'salon_id': booking['salon_id'],
+          'booking_id': booking['id'],
+          'title': 'Reschedule Request',
+          'message': 'A customer requested to reschedule their booking at $shopName to ${DateFormat('MMM dd, yyyy HH:mm').format(newDate)}. Reason: $reason',
+          'type': 'reschedule_request',
+          'is_read': false,
+        });
+
+        // Send Push Notification
+        try {
+          await Supabase.instance.client.functions.invoke('send-push-notification', body: {
+            'user_id': ownerId,
+            'title': 'Reschedule Request',
+            'body': 'The customer requests to reschedule to ${DateFormat('MMM dd, hh:mm a').format(newDate)}. Reason: $reason',
+            'type': 'reschedule_request',
+            'booking_id': booking['id'],
+          });
+        } catch (e) {
+          debugPrint("Push notification error: $e");
+        }
+      }
+
+      onUpdate();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Reschedule request sent")),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: $e")),
+      );
+    }
+  }
+
+  void _showRescheduleDialog(BuildContext context) {
+    DateTime selectedDateTime = DateTime.now().add(const Duration(days: 1));
+    final reasonCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text("Request Reschedule"),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    title: Text(DateFormat('MMM dd, yyyy - HH:mm').format(selectedDateTime)),
+                    trailing: const Icon(Icons.calendar_today),
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: selectedDateTime,
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 30)),
+                      );
+                      if (date != null) {
+                        final time = await showTimePicker(
+                          context: context,
+                          initialTime: TimeOfDay.fromDateTime(selectedDateTime),
+                        );
+                        if (time != null) {
+                          setDialogState(() {
+                            selectedDateTime = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+                          });
+                        }
+                      }
+                    },
+                  ),
+                  TextField(
+                    controller: reasonCtrl,
+                    decoration: const InputDecoration(labelText: "Reason for rescheduling"),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _rescheduleBooking(context, selectedDateTime, reasonCtrl.text);
+                },
+                child: const Text("Send Request"),
+              ),
+            ],
+          );
+        }
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final status = booking['status'] as String;
@@ -226,17 +401,17 @@ class BookingCard extends StatelessWidget {
 
     if (isCancelled) {
       statusColor = Colors.red;
-      statusBgColor = Colors.red.withOpacity(0.1);
+      statusBgColor = Colors.red.withValues(alpha: 0.1);
     } else if (isCompleted) {
       statusColor = Colors.grey;
-      statusBgColor = Colors.grey.withOpacity(0.2);
+      statusBgColor = Colors.grey.withValues(alpha: 0.2);
     } else if (isAccepted) {
       statusColor = Colors.green;
-      statusBgColor = Colors.green.withOpacity(0.1);
+      statusBgColor = Colors.green.withValues(alpha: 0.1);
       statusText = "CONFIRMED";
     } else {
       statusColor = Colors.orange;
-      statusBgColor = Colors.orange.withOpacity(0.1);
+      statusBgColor = Colors.orange.withValues(alpha: 0.1);
       statusText = "PENDING";
     }
 
@@ -269,7 +444,7 @@ class BookingCard extends StatelessWidget {
         border: Border.all(color: Colors.grey[200]!),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, 4),
           )
@@ -427,6 +602,24 @@ class BookingCard extends StatelessWidget {
               ),
             ],
           ),
+
+          if (isUpcoming || isAccepted) ...[
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => _showCancelDialog(context),
+                  child: Text("Cancel", style: GoogleFonts.poppins(color: Colors.red, fontWeight: FontWeight.w600)),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: () => _showRescheduleDialog(context),
+                  child: Text("Reschedule", style: GoogleFonts.poppins(color: Colors.orange, fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
