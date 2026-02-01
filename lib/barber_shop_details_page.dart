@@ -249,8 +249,7 @@ class _BarberShopDetailsPageState extends State<BarberShopDetailsPage> {
       int salonId;
 
       if (widget.shopId == null) {
-        // --- CREATE MODE ---
-        // Defaults
+
         shopData['rating'] = 0.0;
         shopData['today_offer'] = '';
         shopData['recruitment_message'] = '';

@@ -11,6 +11,7 @@ import 'owner_home_page.dart';
 import 'fill_profile_page.dart';
 import 'admin_page.dart';
 import 'firebase_options.dart';
+import 'admin_dashboard.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -88,7 +89,7 @@ class AuthWrapper extends StatelessWidget {
 
         // 🔒 2. SECURITY CHECK: Is this the Super Admin?
         if (user.email == _kSecureAdminEmail) {
-          return const AdminPage();
+          return const AdminNavigationWrapper();
         }
 
         // 3. Regular User -> Fetch Role from 'profiles' table
