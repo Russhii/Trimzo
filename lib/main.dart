@@ -6,15 +6,16 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'login_page.dart';
-import 'home_page.dart'; // Customer Home
-import 'owner_home_page.dart'; // Barber/Owner Home
+import 'home_page.dart';
+import 'owner_home_page.dart';
 import 'fill_profile_page.dart';
-import 'reset_password_page.dart';
-import 'my_bookings_page.dart';
-
+import 'admin_page.dart';
 import 'firebase_options.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// 🔒 SECURITY: Hardcoded Admin Email
+const String _kSecureAdminEmail = 'admin@gmail.com';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,7 +24,7 @@ Future<void> main() async {
   try {
     await Supabase.initialize(
       url: 'https://otcqgozalgpmuzhocdlb.supabase.co',
-      anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im90Y3Fnb3phbGdwbXV6aG9jZGxiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2MjczODUsImV4cCI6MjA3OTIwMzM4NX0.7VXQbHbkM790MnO6CrNiGEfvN3gZtlE3d7M-24LX4_c',
+      anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im90Y3Fnb3phbGdwbXV6aG9jZGxiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM2MjczODUsImV4cCI6MjA3OTIwMzM4NX0.7VXQbHbkM790MnO6CrNiGEfvN3gZtlE3d7M-24LX4_c', // Keep your actual key
     );
   } catch (e) {
     debugPrint("❌ Supabase initialization failed: $e");
@@ -37,24 +38,6 @@ Future<void> main() async {
   } catch (e) {
     debugPrint("❌ Firebase initialization failed: $e");
   }
-
-  // 3. Setup Notifications
-  final messaging = FirebaseMessaging.instance;
-  await messaging.requestPermission();
-
-  // Save Token silently
-  try {
-    String? token = await messaging.getToken();
-    if (token != null) {
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user != null) {
-        await Supabase.instance.client
-            .from('profiles')
-            .update({'fcm_token': token})
-            .eq('id', user.id);
-      }
-    }
-  } catch (_) {}
 
   runApp(const MyApp());
 }
@@ -71,10 +54,11 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         brightness: Brightness.light,
         primaryColor: const Color(0xFFFF6B00),
-        scaffoldBackgroundColor: Colors.white,
+        scaffoldBackgroundColor: Colors.grey[50],
         textTheme: GoogleFonts.poppinsTextTheme(ThemeData.light().textTheme),
         colorScheme: ColorScheme.fromSwatch(primarySwatch: Colors.orange)
             .copyWith(secondary: const Color(0xFFFF6B00)),
+        useMaterial3: true,
       ),
       home: const AuthWrapper(),
     );
@@ -102,7 +86,12 @@ class AuthWrapper extends StatelessWidget {
           return const LoginPage();
         }
 
-        // 2. Logged In -> Check Role
+        // 🔒 2. SECURITY CHECK: Is this the Super Admin?
+        if (user.email == _kSecureAdminEmail) {
+          return const AdminPage();
+        }
+
+        // 3. Regular User -> Fetch Role from 'profiles' table
         return FutureBuilder(
           future: Supabase.instance.client
               .from('profiles')
@@ -118,21 +107,17 @@ class AuthWrapper extends StatelessWidget {
 
             final profile = snap.data as Map<String, dynamic>?;
 
-            // 3. Profile Incomplete -> Fill Profile
+            // 4. Profile Incomplete -> Fill Profile
             if (profile == null || profile['full_name'] == null) {
               return const FillProfilePage();
             }
 
-            // 4. Check User Type (Case Insensitive)
+            // 5. Check User Type from 'profiles' table
             final String userType = (profile['user_type'] ?? 'Customer').toString().toLowerCase();
 
-            // ✅ REDIRECT LOGIC
-            // Checks for 'barber' OR 'owner' to match your database images
             if (userType == 'barber' || userType == 'owner') {
-              print("✅ User is Barber/Owner. Going to OwnerHomePage");
               return const OwnerHomePage();
             } else {
-              print("👤 User is Customer. Going to HomePage");
               return const HomePage();
             }
           },

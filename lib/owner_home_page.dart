@@ -1,3 +1,4 @@
+// lib/owner_home_page.dart
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -50,6 +51,8 @@ class _OwnerHomePageState extends State<OwnerHomePage> {
           _allShops = shops;
           if (shops.isNotEmpty) {
             _selectedShop = shops.first; // Default to first shop
+          } else {
+            _selectedShop = null; // No shops found
           }
           _isLoadingShops = false;
         });
@@ -80,38 +83,32 @@ class _OwnerHomePageState extends State<OwnerHomePage> {
       return const Scaffold(body: Center(child: CircularProgressIndicator(color: Colors.orange)));
     }
 
-    // If user has no shops, show empty state or create page
-    if (_allShops.isEmpty) {
-      return Scaffold(
-        body: Center(
-          child: ElevatedButton(
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BarberShopDetailsPage())).then((_) => _loadAllShops()),
-            child: const Text("Create Your First Shop"),
-          ),
-        ),
-      );
-    }
-
     return Scaffold(
       backgroundColor: Colors.white,
       body: PageView(
         controller: _pageController,
         physics: const NeverScrollableScrollPhysics(),
         children: [
-          // TAB 0: DASHBOARD (Passes selected shop & callback)
-          _DashboardTab(
+          // TAB 0: DASHBOARD
+          _selectedShop == null
+              ? _NoShopView(onRefresh: _loadAllShops)
+              : _DashboardTab(
             selectedShop: _selectedShop!,
             allShops: _allShops,
             onShopChanged: _changeShop,
           ),
 
-          // TAB 1: SCHEDULE (Passes selected shop to filter schedule)
-          _AcceptedBookingsTab(selectedShop: _selectedShop!),
+          // TAB 1: SCHEDULE
+          _selectedShop == null
+              ? _NoShopView(onRefresh: _loadAllShops)
+              : _AcceptedBookingsTab(selectedShop: _selectedShop!),
 
-          // TAB 2: MY SHOP (Passes selected shop to show correct stats)
-          _MyShopTab(selectedShop: _selectedShop!),
+          // TAB 2: MY SHOP
+          _selectedShop == null
+              ? _NoShopView(onRefresh: _loadAllShops)
+              : _MyShopTab(selectedShop: _selectedShop!),
 
-          // TAB 3: PROFILE
+          // TAB 3: PROFILE (Always accessible)
           const ProfilePage(),
         ],
       ),
@@ -142,6 +139,46 @@ class _OwnerHomePageState extends State<OwnerHomePage> {
             BottomNavigationBarItem(icon: Icon(Icons.calendar_month_outlined), activeIcon: Icon(Icons.calendar_month), label: 'Schedule'),
             BottomNavigationBarItem(icon: Icon(Icons.store_mall_directory_outlined), activeIcon: Icon(Icons.store_mall_directory), label: 'My Shop'),
             BottomNavigationBarItem(icon: Icon(Icons.person_outline), activeIcon: Icon(Icons.person), label: 'Profile'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// =======================================================
+// HELPER: EMPTY STATE VIEW
+// =======================================================
+
+class _NoShopView extends StatelessWidget {
+  final VoidCallback onRefresh;
+  const _NoShopView({required this.onRefresh});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(title: const Text("Dashboard"), elevation: 0, backgroundColor: Colors.white),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.store_outlined, size: 80, color: Colors.grey),
+            const SizedBox(height: 16),
+            Text("No Shop Created Yet", style: GoogleFonts.poppins(fontSize: 18, color: Colors.grey[700])),
+            const SizedBox(height: 8),
+            Text("Create your first shop to manage bookings.", style: GoogleFonts.poppins(color: Colors.grey)),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const BarberShopDetailsPage()),
+                ).then((_) => onRefresh());
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+              child: const Text("Create Shop", style: TextStyle(color: Colors.white)),
+            ),
           ],
         ),
       ),
@@ -240,17 +277,32 @@ class _DashboardTabState extends State<_DashboardTab> {
     try {
       await Supabase.instance.client.from('bookings').update({'status': status}).eq('id', bookingId);
 
-      // ... (Notification Logic Same as before) ...
-      // Simplified for brevity, you can keep your full notification logic here
+      // Insert into inbox_messages
+      final booking = _bookings.firstWhere((b) => b['id'] == bookingId);
+      final customerId = booking['user_id'];
+      final salonId = booking['salon_id'];
+
+      await Supabase.instance.client.from('inbox_messages').insert({
+        'user_id': customerId,
+        'salon_id': salonId,
+        'booking_id': bookingId,
+        'title': status == 'accepted' ? 'Booking Accepted!' : 'Booking Rejected',
+        'message': status == 'accepted'
+            ? 'Your booking at ${widget.selectedShop['name']} has been accepted.'
+            : 'Your booking at ${widget.selectedShop['name']} has been rejected.',
+        'type': status == 'accepted' ? 'booking_accepted' : 'booking_rejected',
+        'is_read': false,
+      });
 
       setState(() {
         _bookings.removeWhere((b) => b['id'] == bookingId);
       });
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(status == 'cancelled' ? 'Rejected' : 'Accepted!'), backgroundColor: status == 'cancelled' ? Colors.red : Colors.green));
       }
     } catch (e) {
-      // Error handling
+      debugPrint("Error updating status: $e");
     }
   }
 
@@ -452,14 +504,18 @@ class _AcceptedBookingsTabState extends State<_AcceptedBookingsTab> {
     }
   }
 
-  // ... (Keep existing helpers: _updateAddonStatus, _markCompleted, _cancelBooking, _requestReschedule, etc.) ...
-  // For brevity, I am assuming you keep the helper methods you wrote in your original code here.
-  // Just ensure they refresh using _fetchAcceptedBookings();
+  Future<void> _markCompleted(int id) async {
+    await Supabase.instance.client.from('bookings').update({'status': 'completed'}).eq('id', id);
+    _fetchAcceptedBookings();
+  }
+
+  Future<void> _cancelBooking(int id) async {
+    await Supabase.instance.client.from('bookings').update({'status': 'cancelled'}).eq('id', id);
+    _fetchAcceptedBookings();
+  }
 
   @override
   Widget build(BuildContext context) {
-    // ... (Your existing UI for _AcceptedBookingsTab, simply use _acceptedBookings) ...
-    // Copy the entire build method from your original code here.
     return Scaffold(
       backgroundColor: const Color(0xFFF9FAFB),
       appBar: AppBar(
@@ -483,13 +539,35 @@ class _AcceptedBookingsTabState extends State<_AcceptedBookingsTab> {
         itemCount: _acceptedBookings.length,
         separatorBuilder: (c, i) => const SizedBox(height: 20),
         itemBuilder: (context, index) {
-          // ... Your existing card UI ...
           final booking = _acceptedBookings[index];
           final customer = booking['customer'] ?? {};
+          final dt = DateTime.parse(booking['booking_date']).toLocal();
+
           return Container(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
-            child: Text("${customer['full_name'] ?? 'Client'} - ${booking['service_name']}"),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)]),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text("${customer['full_name'] ?? 'Client'}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+                    Text(DateFormat('MMM d, h:mm a').format(dt), style: GoogleFonts.poppins(color: Colors.orange)),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(booking['service_name'], style: GoogleFonts.poppins(color: Colors.grey)),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(onPressed: () => _cancelBooking(booking['id']), child: const Text("Cancel", style: TextStyle(color: Colors.red))),
+                    ElevatedButton(onPressed: () => _markCompleted(booking['id']), style: ElevatedButton.styleFrom(backgroundColor: Colors.black), child: const Text("Complete", style: TextStyle(color: Colors.white))),
+                  ],
+                )
+              ],
+            ),
           );
         },
       ),
@@ -674,7 +752,7 @@ class _MyShopTabState extends State<_MyShopTab> {
                 _buildMenuCard(icon: Icons.people_outline, title: "Staff", color: Colors.purple, onTap: () => _openStaffManager(context, shop['id'])),
                 _buildMenuCard(icon: Icons.access_time, title: "Opening Hours", color: Colors.orange, onTap: () {}),
                 _buildMenuCard(icon: Icons.edit, title: "Edit Details", color: Colors.green, onTap: () {
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const BarberShopDetailsPage())).then((_) => _fetchShopStats());
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => BarberShopDetailsPage(shopId: shop['id']))).then((_) => _fetchShopStats());
                 }),
               ],
             ),
@@ -684,7 +762,6 @@ class _MyShopTabState extends State<_MyShopTab> {
     );
   }
 
-  // ... (Keep _buildStatCard and _buildMenuCard helpers from original code) ...
   Widget _buildStatCard(String title, String value, IconData icon) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -719,13 +796,6 @@ class _MyShopTabState extends State<_MyShopTab> {
   }
 }
 
-// =======================================================
-// KEEP THESE CLASSES (ServicesSheet, StaffSheet, BookingCard)
-// =======================================================
-// Paste your existing _ManageServicesSheet class here...
-// Paste your existing _ManageStaffSheet class here...
-// Paste your existing _BookingCard class here...
-// (I omitted them to save space, but you must include them for the code to run)
 class _ManageServicesSheet extends StatefulWidget {
   final int shopId;
   const _ManageServicesSheet({required this.shopId});

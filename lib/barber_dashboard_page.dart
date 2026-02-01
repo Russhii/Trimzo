@@ -4,7 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'barber_shop_details_page.dart';
 import 'home_page.dart';
-import 'owner_home_page.dart'; // <--- 1. Import OwnerHomePage
+import 'owner_home_page.dart';
 
 class BarberDashboardPage extends StatefulWidget {
   const BarberDashboardPage({super.key});
@@ -29,7 +29,6 @@ class _BarberDashboardPageState extends State<BarberDashboardPage> {
     _loadShopData();
   }
 
-  // --- HELPER: Extract Image from DB Array ---
   String _getFirstImage(dynamic imageUrls) {
     if (imageUrls != null && imageUrls is List && imageUrls.isNotEmpty) {
       return imageUrls[0].toString();
@@ -113,7 +112,6 @@ class _BarberDashboardPageState extends State<BarberDashboardPage> {
     }
   }
 
-  // --- UI BUILDER ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -129,11 +127,9 @@ class _BarberDashboardPageState extends State<BarberDashboardPage> {
                 fontSize: 24,
                 fontWeight: FontWeight.bold)),
         actions: [
-          // 2. UPDATED BUTTON: EYE ICON TO HOME ICON
           IconButton(
-            icon: const Icon(Icons.home, color: Colors.orange), // Changed to Home
+            icon: const Icon(Icons.home, color: Colors.orange),
             onPressed: () {
-              // 3. UPDATED NAVIGATION: Redirects to OwnerHomePage
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(builder: (_) => const OwnerHomePage()),
@@ -141,14 +137,19 @@ class _BarberDashboardPageState extends State<BarberDashboardPage> {
               );
             },
           ),
+
+          // ✅ FIXED SETTINGS BUTTON
           IconButton(
             icon: const Icon(Icons.settings, color: Colors.black54),
             onPressed: () {
+              // Pass the ID if shop data is loaded
+              final int? shopId = _shopData?['id'];
+
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                    builder: (_) => const BarberShopDetailsPage()),
-              ).then((_) => _loadShopData());
+                    builder: (_) => BarberShopDetailsPage(shopId: shopId)),
+              ).then((_) => _loadShopData()); // Refresh on return
             },
           ),
           const SizedBox(width: 10),
@@ -198,8 +199,6 @@ class _BarberDashboardPageState extends State<BarberDashboardPage> {
     );
   }
 
-  // --- WIDGET COMPONENTS ---
-
   Widget _buildNoShopView() {
     return Center(
       child: Column(
@@ -230,7 +229,7 @@ class _BarberDashboardPageState extends State<BarberDashboardPage> {
             onPressed: () => Navigator.push(
                 context,
                 MaterialPageRoute(
-                    builder: (_) => const BarberShopDetailsPage()))
+                    builder: (_) => const BarberShopDetailsPage())) // Create Mode
                 .then((_) => _loadShopData()),
             child: Text("Create Shop",
                 style: GoogleFonts.poppins(
@@ -258,7 +257,6 @@ class _BarberDashboardPageState extends State<BarberDashboardPage> {
       ),
       child: Column(
         children: [
-          // Image Area
           ClipRRect(
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
             child: Container(
@@ -270,7 +268,6 @@ class _BarberDashboardPageState extends State<BarberDashboardPage> {
                   : const Icon(Icons.store, size: 50, color: Colors.grey),
             ),
           ),
-          // Info Area
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -537,8 +534,6 @@ class _BarberDashboardPageState extends State<BarberDashboardPage> {
       ],
     );
   }
-
-  // --- LOGIC DIALOGS ---
 
   void _showAddServiceDialog() {
     final nameCtrl = TextEditingController();

@@ -1,4 +1,3 @@
-// lib/home_page.dart
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -35,14 +34,16 @@ class _HomePageState extends State<HomePage> {
     "Coloring"
   ];
 
+  // --- USER DATA ---
+  String? _userGender; // e.g. 'Male' or 'Female'
+
   // --- MAP STATE ---
   final MapController _mapController = MapController();
   LatLng _currentLocation = const LatLng(18.5204, 73.8567);
   List<Marker> _shopMarkers = [];
 
   // --- SHEET STATE ---
-  final DraggableScrollableController _sheetController =
-  DraggableScrollableController();
+  final DraggableScrollableController _sheetController = DraggableScrollableController();
   double _sheetPosition = 0.15;
   final double _minSheetSize = 0.15;
   final double _maxSheetSize = 0.88;
@@ -54,8 +55,9 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _pageController = PageController();
-    _initMapData();
-    _fetchSalons("All");
+
+    // Initialize: Get Gender -> Then Get Data
+    _initData();
 
     _sheetController.addListener(() {
       setState(() {
@@ -64,84 +66,87 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  Future<void> _initData() async {
+    await _getCurrentLocation();
+    await _fetchUserGender(); // 1. Find out if user is Male or Female
+    _fetchSalons("All");      // 2. Fetch List (Filtered)
+    _fetchShopMarkers();      // 3. Fetch Map Pins (Filtered)
+  }
+
+  // --- 1. Fetch User Gender ---
+  Future<void> _fetchUserGender() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
+      final response = await Supabase.instance.client
+          .from('profiles')
+          .select('gender')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (response != null && response['gender'] != null) {
+        setState(() {
+          _userGender = response['gender'].toString();
+          // Ensure capital case matches DB (Male/Female)
+          if (_userGender!.toLowerCase() == 'male') _userGender = 'Male';
+          if (_userGender!.toLowerCase() == 'female') _userGender = 'Female';
+        });
+        print("👤 User Gender: $_userGender");
+      }
+    }
+  }
+
   // --- HELPER: Extract Image from DB Array ---
   String _getFirstImage(dynamic imageUrls) {
     if (imageUrls != null && imageUrls is List && imageUrls.isNotEmpty) {
       return imageUrls[0].toString();
     }
-    return ''; // Return empty string if no image found
+    return '';
   }
 
+  // --- 2. Fetch Salons (Filtered by Gender) ---
   void _fetchSalons(String category) {
-    // FIX 1: Table name changed to 'barber_shops'
+    // 1. Start with select()
     var query = Supabase.instance.client
         .from('barber_shops')
-        .select()
-        .order('rating', ascending: false)
-        .limit(5);
+        .select();
+
+    // 2. Apply Gender Filter (Must be BEFORE order/limit)
+    if (_userGender == 'Male') {
+      query = query.or('target_gender.eq.Male,target_gender.eq.Unisex');
+    } else if (_userGender == 'Female') {
+      query = query.or('target_gender.eq.Female,target_gender.eq.Unisex');
+    }
+
+    // 3. Apply Order and Limit at the end
+    // We assign it to a 'final' variable because the type changes here
+    final finalQuery = query.order('rating', ascending: false).limit(10);
 
     setState(() {
-      _salonsFuture = query;
+      _salonsFuture = finalQuery;
     });
   }
 
-  @override
-  void dispose() {
-    _pageController.dispose();
-    _mapController.dispose();
-    _sheetController.dispose();
-    super.dispose();
-  }
-
-  // --- 1. Initialize Map ---
-  Future<void> _initMapData() async {
-    await _getCurrentLocation();
-    await _fetchShopMarkers();
-  }
-
-  // --- 2. Get User's Real Location ---
-  Future<void> _getCurrentLocation() async {
-    bool serviceEnabled;
-    LocationPermission permission;
-
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return;
-
-    permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) return;
-    }
-    if (permission == LocationPermission.deniedForever) return;
-
-    try {
-      final position = await Geolocator.getCurrentPosition();
-      if (mounted) {
-        setState(() {
-          _currentLocation = LatLng(position.latitude, position.longitude);
-        });
-        _mapController.move(_currentLocation, 15.0);
-      }
-    } catch (e) {
-      debugPrint("Error: $e");
-    }
-  }
-
-  // --- 3. Fetch Shops for Map ---
+  // --- 3. Fetch Map Markers (Filtered by Gender) ---
   Future<void> _fetchShopMarkers() async {
     try {
-      // FIX 2: Table 'barber_shops' and column 'image_urls'
-      final response = await Supabase.instance.client.from('barber_shops').select(
-          'id, name, address, latitude, longitude, image_urls, rating, phone');
+      // 1. Start Query
+      var query = Supabase.instance.client.from('barber_shops').select(
+          'id, name, address, latitude, longitude, image_urls, rating, phone, target_gender');
 
-      final List<dynamic> data = response;
+      // 2. Apply Filter (BEFORE fetching)
+      if (_userGender == 'Male') {
+        query = query.or('target_gender.eq.Male,target_gender.eq.Unisex');
+      } else if (_userGender == 'Female') {
+        query = query.or('target_gender.eq.Female,target_gender.eq.Unisex');
+      }
+
+      // 3. Await the query directly
+      final List<dynamic> data = await query;
       final List<Marker> markers = [];
 
       for (var shop in data) {
         if (shop['latitude'] != null && shop['longitude'] != null) {
           final point = LatLng(shop['latitude'], shop['longitude']);
-
-          // Use helper to get image
           final String img = _getFirstImage(shop['image_urls']);
 
           markers.add(
@@ -164,7 +169,32 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  // Navigation Helper
+  Future<void> _getCurrentLocation() async {
+    // ... (Your existing geolocation code) ...
+    // Keeping this brief to save space, paste your original geolocation logic here
+    bool serviceEnabled;
+    LocationPermission permission;
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return;
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) return;
+    }
+    if (permission == LocationPermission.deniedForever) return;
+    try {
+      final position = await Geolocator.getCurrentPosition();
+      if (mounted) {
+        setState(() {
+          _currentLocation = LatLng(position.latitude, position.longitude);
+        });
+        _mapController.move(_currentLocation, 15.0);
+      }
+    } catch (e) {
+      debugPrint("Error: $e");
+    }
+  }
+
   void _navigateToDetails(Map<String, dynamic> shop) {
     Navigator.push(
       context,
@@ -172,74 +202,12 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // --- WIDGETS ---
-
-  Widget _buildCategoryFilters() {
-    return SizedBox(
-      height: 40,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        itemCount: _categories.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
-        itemBuilder: (context, index) {
-          final category = _categories[index];
-          final isSelected = category == _selectedCategory;
-          return GestureDetector(
-            onTap: () {
-              setState(() => _selectedCategory = category);
-              _fetchSalons(category);
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              decoration: BoxDecoration(
-                color: isSelected ? Colors.orange : Colors.grey[100],
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                    color: isSelected ? Colors.orange : Colors.transparent),
-              ),
-              child: Center(
-                child: Text(
-                  category,
-                  style: GoogleFonts.poppins(
-                    color: isSelected ? Colors.white : Colors.black87,
-                    fontWeight: FontWeight.w500,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildCustomShopPin(String imageUrl) {
-    return Column(
-      children: [
-        Container(
-          width: 45,
-          height: 45,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.orange, width: 2),
-            image: imageUrl.isNotEmpty
-                ? DecorationImage(
-                image: NetworkImage(imageUrl), fit: BoxFit.cover)
-                : null,
-          ),
-          child: imageUrl.isEmpty
-              ? const Icon(Icons.store, size: 24, color: Colors.orange)
-              : null,
-        ),
-        ClipPath(
-          clipper: _TriangleClipper(),
-          child: Container(color: Colors.orange, width: 10, height: 8),
-        )
-      ],
-    );
+  @override
+  void dispose() {
+    _pageController.dispose();
+    _mapController.dispose();
+    _sheetController.dispose();
+    super.dispose();
   }
 
   User? get user => Supabase.instance.client.auth.currentUser;
@@ -279,8 +247,7 @@ class _HomePageState extends State<HomePage> {
           },
           items: const [
             BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
-            BottomNavigationBarItem(
-                icon: Icon(Icons.calendar_today), label: "Bookings"),
+            BottomNavigationBarItem(icon: Icon(Icons.calendar_today), label: "Bookings"),
             BottomNavigationBarItem(icon: Icon(Icons.inbox), label: "Inbox"),
             BottomNavigationBarItem(icon: Icon(Icons.person), label: "Profile"),
           ],
@@ -290,85 +257,57 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildHomeStack() {
-    final double sheetHeightPixels =
-        MediaQuery.of(context).size.height * _sheetPosition;
+    final double sheetHeightPixels = MediaQuery.of(context).size.height * _sheetPosition;
     final double buttonOpacity = _sheetPosition > 0.8 ? 0.0 : 1.0;
 
     return Stack(
       children: [
+        // 1. MAP LAYER
         FlutterMap(
           mapController: _mapController,
           options: MapOptions(
             initialCenter: _currentLocation,
             initialZoom: 14.0,
-            interactionOptions: const InteractionOptions(
-                flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
+            interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
           ),
           children: [
             TileLayer(
-              urlTemplate:
-              'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+              urlTemplate: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
               subdomains: const ['a', 'b', 'c'],
-              userAgentPackageName: 'com.ruturaj.barberapp',
               tileProvider: CancellableNetworkTileProvider(),
             ),
             MarkerLayer(markers: [
               Marker(
                   point: _currentLocation,
-                  width: 60,
-                  height: 60,
+                  width: 60, height: 60,
                   child: _buildUserLocationPin()),
-              ..._shopMarkers,
+              ..._shopMarkers, // Filtered Markers
             ]),
           ],
         ),
+
+        // 2. SEARCH BAR & HEADER
         Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          height: 150,
-          child: IgnorePointer(
-              child: Container(
-                  decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.white.withOpacity(0.9),
-                            Colors.white.withOpacity(0.0)
-                          ])))),
-        ),
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
+          top: 0, left: 0, right: 0,
           child: SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               child: Container(
                 height: 50,
-                decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(30),
-                    boxShadow: const [
-                      BoxShadow(
-                          color: Colors.black12,
-                          blurRadius: 10,
-                          offset: Offset(0, 4))
-                    ]),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(30), boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4))]),
                 child: TextField(
                     decoration: InputDecoration(
-                        hintText: "Search salon, service...",
+                        hintText: "Search salon...",
                         hintStyle: const TextStyle(color: Colors.black38),
-                        prefixIcon:
-                        const Icon(Icons.search, color: Colors.orange),
+                        prefixIcon: const Icon(Icons.search, color: Colors.orange),
                         border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 14))),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14))),
               ),
             ),
           ),
         ),
+
+        // 3. BOTTOM SHEET
         DraggableScrollableSheet(
           controller: _sheetController,
           initialChildSize: _minSheetSize,
@@ -379,13 +318,7 @@ class _HomePageState extends State<HomePage> {
               decoration: const BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
-                boxShadow: [
-                  BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 20,
-                      spreadRadius: 2,
-                      offset: Offset(0, -5))
-                ],
+                boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 20, spreadRadius: 2, offset: Offset(0, -5))],
               ),
               child: SingleChildScrollView(
                 controller: scrollController,
@@ -394,14 +327,9 @@ class _HomePageState extends State<HomePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Center(
-                        child: Container(
-                            width: 40,
-                            height: 4,
-                            margin: const EdgeInsets.only(bottom: 20),
-                            decoration: BoxDecoration(
-                                color: Colors.grey[300],
-                                borderRadius: BorderRadius.circular(2)))),
+                    Center(child: Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 20), decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)))),
+
+                    // Welcome & Gender Badge
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: Row(
@@ -410,28 +338,18 @@ class _HomePageState extends State<HomePage> {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                  "Morning, ${user?.userMetadata?['full_name']?.split(' ').first ?? 'User'}!",
-                                  style: GoogleFonts.poppins(
-                                      fontSize: 26,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.black87)),
-                              Text("Find your nearest salon",
-                                  style: GoogleFonts.poppins(
-                                      fontSize: 14, color: Colors.black54)),
+                              Text("Morning, ${user?.userMetadata?['full_name']?.split(' ').first ?? 'User'}!", style: GoogleFonts.poppins(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.black87)),
+
+                              // Show user which filter is active
+                              Row(
+                                children: [
+                                  Text("Finding best salons for ", style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54)),
+                                  Text(_userGender ?? "Everyone", style: GoogleFonts.poppins(fontSize: 14, color: Colors.orange, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
                             ],
                           ),
-                          Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: const BoxDecoration(
-                                  color: Colors.white,
-                                  shape: BoxShape.circle,
-                                  boxShadow: [
-                                    BoxShadow(
-                                        color: Colors.black12, blurRadius: 4)
-                                  ]),
-                              child: const Icon(Icons.notifications_outlined,
-                                  color: Colors.black))
+                          const Icon(Icons.notifications_outlined, color: Colors.black)
                         ],
                       ),
                     ),
@@ -442,32 +360,10 @@ class _HomePageState extends State<HomePage> {
 
                     const SizedBox(height: 24),
 
-                    // --- TOP RATED SECTION ---
+                    // Top Rated Section
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Row(
-                        children: [
-                          Text("Top Rated",
-                              style: GoogleFonts.poppins(
-                                  fontSize: 18, fontWeight: FontWeight.bold)),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                                color: Colors.orange.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(8)),
-                            child: Text(_selectedCategory,
-                                style: const TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.orange,
-                                    fontWeight: FontWeight.bold)),
-                          ),
-                          const Spacer(),
-                          const Icon(Icons.arrow_forward,
-                              size: 16, color: Colors.grey),
-                        ],
-                      ),
+                      child: Text("Top Rated", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
                     ),
                     const SizedBox(height: 16),
                     SizedBox(
@@ -475,50 +371,31 @@ class _HomePageState extends State<HomePage> {
                       child: FutureBuilder<List<Map<String, dynamic>>>(
                         future: _salonsFuture,
                         builder: (context, snapshot) {
-                          if (snapshot.connectionState ==
-                              ConnectionState.waiting) {
-                            return const Center(
-                                child: CircularProgressIndicator(
-                                    color: Colors.orange));
-                          }
-                          if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                            return const Center(
-                                child: Text("No top rated salons found"));
-                          }
+                          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: Colors.orange));
+                          if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No salons found"));
 
                           final salons = snapshot.data!;
                           return ListView.separated(
                             padding: const EdgeInsets.symmetric(horizontal: 20),
                             scrollDirection: Axis.horizontal,
                             itemCount: salons.length,
-                            separatorBuilder: (_, __) =>
-                            const SizedBox(width: 16),
-                            itemBuilder: (context, index) {
-                              return _buildTopRatedCard(salons[index]);
-                            },
+                            separatorBuilder: (_, __) => const SizedBox(width: 16),
+                            itemBuilder: (context, index) => _buildTopRatedCard(salons[index]),
                           );
                         },
                       ),
                     ),
-                    // -----------------------------------------------
 
                     const SizedBox(height: 24),
+
+                    // All Salons List
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text("Most Popular",
-                              style: GoogleFonts.poppins(
-                                  fontSize: 20, fontWeight: FontWeight.w600)),
-                          TextButton(
-                              onPressed: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                      builder: (_) => const AllSalonsPage())),
-                              child: Text("See All",
-                                  style:
-                                  GoogleFonts.poppins(color: Colors.orange))),
+                          Text("Near You", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.w600)),
+                          TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AllSalonsPage())), child: Text("See All", style: GoogleFonts.poppins(color: Colors.orange))),
                         ],
                       ),
                     ),
@@ -530,13 +407,7 @@ class _HomePageState extends State<HomePage> {
                         builder: (context, snapshot) {
                           if (!snapshot.hasData) return const SizedBox();
                           final salons = snapshot.data!;
-                          return Column(
-                              children: salons
-                                  .map((salon) => Padding(
-                                  padding:
-                                  const EdgeInsets.only(bottom: 16),
-                                  child: _salonCard(salon)))
-                                  .toList());
+                          return Column(children: salons.map((salon) => Padding(padding: const EdgeInsets.only(bottom: 16), child: _salonCard(salon))).toList());
                         },
                       ),
                     ),
@@ -546,173 +417,105 @@ class _HomePageState extends State<HomePage> {
             );
           },
         ),
+
+        // Location Button
         Positioned(
-          bottom: sheetHeightPixels + 20,
-          right: 20,
+          bottom: sheetHeightPixels + 20, right: 20,
           child: AnimatedOpacity(
             duration: const Duration(milliseconds: 200),
             opacity: buttonOpacity,
-            child: FloatingActionButton(
-                heroTag: "btn_loc",
-                backgroundColor: Colors.white,
-                onPressed: _getCurrentLocation,
-                child: const Icon(Icons.my_location, color: Colors.black87)),
+            child: FloatingActionButton(heroTag: "btn_loc", backgroundColor: Colors.white, onPressed: _getCurrentLocation, child: const Icon(Icons.my_location, color: Colors.black87)),
           ),
         ),
       ],
     );
   }
 
-  // --- TOP RATED CARD ---
-  Widget _buildTopRatedCard(Map<String, dynamic> salon) {
-    // FIX 3: Get first image safely
-    final String img = _getFirstImage(salon['image_urls']);
+  // --- WIDGETS HELPERS (Same as before) ---
 
+  Widget _buildCategoryFilters() {
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        itemCount: _categories.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (context, index) {
+          final category = _categories[index];
+          final isSelected = category == _selectedCategory;
+          return GestureDetector(
+            onTap: () {
+              setState(() => _selectedCategory = category);
+              _fetchSalons(category);
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              decoration: BoxDecoration(color: isSelected ? Colors.orange : Colors.grey[100], borderRadius: BorderRadius.circular(20), border: Border.all(color: isSelected ? Colors.orange : Colors.transparent)),
+              child: Center(child: Text(category, style: GoogleFonts.poppins(color: isSelected ? Colors.white : Colors.black87, fontWeight: FontWeight.w500, fontSize: 13))),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildCustomShopPin(String imageUrl) {
+    return Column(children: [
+      Container(
+        width: 45, height: 45,
+        decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, border: Border.all(color: Colors.orange, width: 2), image: imageUrl.isNotEmpty ? DecorationImage(image: NetworkImage(imageUrl), fit: BoxFit.cover) : null),
+        child: imageUrl.isEmpty ? const Icon(Icons.store, size: 24, color: Colors.orange) : null,
+      ),
+      ClipPath(clipper: _TriangleClipper(), child: Container(color: Colors.orange, width: 10, height: 8))
+    ]);
+  }
+
+  Widget _buildTopRatedCard(Map<String, dynamic> salon) {
+    final String img = _getFirstImage(salon['image_urls']);
     return GestureDetector(
       onTap: () => _navigateToDetails(salon),
       child: Container(
         width: 160,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 4))
-          ],
-          border: Border.all(color: Colors.grey[100]!),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Image
-            Expanded(
-              child: ClipRRect(
-                borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(16)),
-                child: Image.network(
-                  img,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                      color: Colors.grey[200],
-                      child: const Icon(Icons.spa, color: Colors.grey)),
-                ),
-              ),
-            ),
-            // Details
-            Padding(
-              padding: const EdgeInsets.all(10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(salon['name'],
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.poppins(
-                          fontSize: 14, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      const Icon(Icons.star, color: Colors.amber, size: 14),
-                      Text(
-                          " ${(salon['rating'] as num?)?.toDouble() ?? 0.0}",
-                          style: const TextStyle(
-                              fontSize: 12, fontWeight: FontWeight.bold)),
-                      Text(" (25)",
-                          style: TextStyle(fontSize: 12, color: Colors.grey[500])),
-                    ],
-                  )
-                ],
-              ),
-            ),
-          ],
-        ),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))], border: Border.all(color: Colors.grey[100]!)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: ClipRRect(borderRadius: const BorderRadius.vertical(top: Radius.circular(16)), child: Image.network(img, width: double.infinity, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: Colors.grey[200], child: const Icon(Icons.spa, color: Colors.grey))))),
+          Padding(padding: const EdgeInsets.all(10), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(salon['name'], maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Row(children: [const Icon(Icons.star, color: Colors.amber, size: 14), Text(" ${(salon['rating'] as num?)?.toDouble() ?? 0.0}", style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold))])
+          ]))
+        ]),
+      ),
+    );
+  }
+
+  Widget _salonCard(Map<String, dynamic> salon) {
+    final String img = _getFirstImage(salon['image_urls']);
+    return GestureDetector(
+      onTap: () => _navigateToDetails(salon),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.grey[200]!), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4))]),
+        child: Row(children: [
+          ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.network(img, width: 90, height: 90, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: Colors.grey[200], child: const Icon(Icons.spa, color: Colors.grey, size: 40)))),
+          const SizedBox(width: 16),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(salon['name'], style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text(salon['address'] ?? '', style: const TextStyle(color: Colors.black54, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 8),
+            // Gender Badge
+            if (salon['target_gender'] != null)
+              Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(4)), child: Text(salon['target_gender'], style: TextStyle(fontSize: 10, color: Colors.blue[800], fontWeight: FontWeight.bold))),
+          ]))
+        ]),
       ),
     );
   }
 
   Widget _buildUserLocationPin() {
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        Container(
-            width: 60,
-            height: 60,
-            decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.2), shape: BoxShape.circle)),
-        Container(
-            width: 20,
-            height: 20,
-            decoration: BoxDecoration(
-                color: Colors.blue,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 3),
-                boxShadow: const [
-                  BoxShadow(color: Colors.black26, blurRadius: 5)
-                ])),
-      ],
-    );
-  }
-
-  Widget _salonCard(Map<String, dynamic> salon) {
-    // FIX 4: Get first image safely
-    final String img = _getFirstImage(salon['image_urls']);
-
-    return GestureDetector(
-      onTap: () => _navigateToDetails(salon),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.grey[200]!),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withOpacity(0.03),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4))
-            ]),
-        child: Row(
-          children: [
-            ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: Image.network(img,
-                    width: 90,
-                    height: 90,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                        color: Colors.grey[200],
-                        child: const Icon(Icons.spa,
-                            color: Colors.grey, size: 40)))),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(salon['name'],
-                      style: GoogleFonts.poppins(
-                          fontSize: 18, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 4),
-                  Text(salon['address'] ?? '',
-                      style: const TextStyle(color: Colors.black54, fontSize: 13),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 8),
-                  Row(children: [
-                    const Icon(Icons.star, color: Colors.amber, size: 18),
-                    Text(
-                        " ${(salon['rating'] as num?)?.toDouble() ?? 0.0}",
-                        style: const TextStyle(fontWeight: FontWeight.w600))
-                  ]),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    return Stack(alignment: Alignment.center, children: [Container(width: 60, height: 60, decoration: BoxDecoration(color: Colors.blue.withOpacity(0.2), shape: BoxShape.circle)), Container(width: 20, height: 20, decoration: BoxDecoration(color: Colors.blue, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 3), boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 5)]))]);
   }
 }
 
@@ -726,7 +529,6 @@ class _TriangleClipper extends CustomClipper<Path> {
     path.close();
     return path;
   }
-
   @override
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
