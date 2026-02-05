@@ -49,7 +49,7 @@ class _HomePageState extends State<HomePage> {
   final double _maxSheetSize = 0.88;
 
   // --- SUPABASE FUTURES ---
-  late Future<List<Map<String, dynamic>>> _salonsFuture;
+  late Future<List<Map<String, dynamic>>> _salonsFuture = Future.value([]);
 
   @override
   void initState() {

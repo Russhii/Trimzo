@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'login_page.dart';
-import 'barber_dashboard_page.dart'; // Import your barber dashboard
+import 'barber_dashboard_page.dart';
+import 'fill_profile_page.dart'; // NEW: Import EditProfilePage
+import 'change_password_page.dart'; // NEW: Import ChangePasswordPage
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -59,14 +61,51 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
-  // Navigate to Edit Profile (for customers)
+  // Navigate to Edit Profile
   void _goToEditProfile() {
-    // TODO: Create this page later (CustomerProfileEditPage)
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Edit Profile page coming soon!")),
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const FillProfilePage(isEditMode: true)),
     );
-    // Example navigation:
-    // Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomerProfileEditPage()));
+  }
+
+  // Navigate to Change Password
+  void _goToChangePassword() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ChangePasswordPage()),
+    );
+  }
+
+  // Show Help & Support Dialog (Placeholder)
+  void _showHelpSupport() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("Help & Support", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+        content: Text("Contact support at support@barberapp.com or visit our FAQ page.", style: GoogleFonts.poppins()),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK")),
+        ],
+      ),
+    );
+  }
+
+  // Show About App Dialog
+  void _showAboutApp() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("About App", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+        content: Text(
+          "Barber App v1.0\n\nA simple app for booking salon services.\nBuilt with Flutter and Supabase.\n\n© 2026 xAI",
+          style: GoogleFonts.poppins(),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("OK")),
+        ],
+      ),
+    );
   }
 
   // Navigate to Barber Dashboard
@@ -80,54 +119,50 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   Widget build(BuildContext context) {
     final user = Supabase.instance.client.auth.currentUser!;
-    final fullName = user.userMetadata?['full_name'] ??
-        user.email?.split('@').first ??
-        'User';
+    final name = user.userMetadata?['full_name'] ?? 'User';
+    final email = user.email ?? 'No email';
 
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.black),
         title: Text(
           "Profile",
-          style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.black),
+          style: GoogleFonts.poppins(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+            color: Colors.black,
+          ),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.red),
-            tooltip: "Logout",
-            onPressed: () => _logout(context),
-          )
-        ],
       ),
       body: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            CircleAvatar(
-              radius: 60,
-              backgroundImage: NetworkImage(user.userMetadata?['avatar_url'] ?? ''),
-              onBackgroundImageError: (_, __) => null,
-              child: user.userMetadata?['avatar_url'] == null
-                  ? const Icon(Icons.person, size: 80, color: Colors.grey)
-                  : null,
-            ),
             const SizedBox(height: 20),
-            Text(
-              fullName,
-              style: GoogleFonts.poppins(fontSize: 28, fontWeight: FontWeight.bold),
+            CircleAvatar(
+              radius: 50,
+              backgroundColor: Colors.orange,
+              child: Text(
+                name[0].toUpperCase(),
+                style: const TextStyle(fontSize: 40, color: Colors.white),
+              ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 16),
             Text(
-              user.email ?? '',
-              style: GoogleFonts.poppins(color: Colors.black54, fontSize: 16),
+              name,
+              style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 40),
-
-            // Menu Items
-            _menuItem(Icons.person_outline, "Edit Profile", _goToEditProfile),
+            Text(
+              email,
+              style: GoogleFonts.poppins(fontSize: 16, color: Colors.grey),
+            ),
+            const SizedBox(height: 32),
+            _menuItem(Icons.edit, "Edit Details", _goToEditProfile),
+            _menuItem(Icons.lock_outline, "Change Password", _goToChangePassword),
+            _menuItem(Icons.help_outline, "Help & Support", _showHelpSupport),
+            _menuItem(Icons.info_outline, "About App", _showAboutApp),
 
             // Only show Barber Dashboard if user is a barber
             if (_isCheckingRole)
@@ -143,10 +178,6 @@ class _ProfilePageState extends State<ProfilePage> {
                 color: Colors.orange,
                 bold: true,
               ),
-
-            _menuItem(Icons.lock_outline, "Change Password", () {}),
-            _menuItem(Icons.help_outline, "Help & Support", () {}),
-            _menuItem(Icons.info_outline, "About App", () {}),
 
             const Spacer(),
 

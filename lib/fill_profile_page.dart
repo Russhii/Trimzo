@@ -11,7 +11,12 @@ import 'login_page.dart';
 import 'barber_shop_details_page.dart';
 
 class FillProfilePage extends StatefulWidget {
-  const FillProfilePage({super.key});
+  final bool isEditMode; // NEW: true = edit existing profile, false = first-time setup
+
+  const FillProfilePage({
+    super.key,
+    this.isEditMode = false, // default: first-time signup
+  });
 
   @override
   State<FillProfilePage> createState() => _FillProfilePageState();
@@ -22,20 +27,66 @@ class _FillProfilePageState extends State<FillProfilePage> {
   final _usernameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   String? _fullPhoneNumber;
+  String? _existingPhone; // NEW
+  String? _existingAvatarUrl; // NEW: for displaying current photo
 
   DateTime? _selectedDate;
   String _gender = 'Male';
-  String _userType = 'Customer'; // New field for user type
+  String _userType = 'Customer';
   File? _profileImage;
+
+  bool _isLoading = false; // NEW: for loading existing data in edit mode
 
   final picker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
+
     final user = Supabase.instance.client.auth.currentUser;
     if (user?.email != null) {
       _emailCtrl.text = user!.email!;
+    }
+
+    // If edit mode → load existing profile data
+    if (widget.isEditMode) {
+      _loadExistingProfile();
+    }
+  }
+
+  Future<void> _loadExistingProfile() async {
+    setState(() => _isLoading = true);
+
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      Navigator.pop(context);
+      return;
+    }
+
+    try {
+      final response = await Supabase.instance.client
+          .from('profiles')
+          .select()
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (response != null && mounted) {
+        setState(() {
+          _fullNameCtrl.text = response['full_name'] ?? '';
+          _usernameCtrl.text = response['username'] ?? '';
+          _existingPhone = response['phone'];
+          _selectedDate = response['birthday'] != null ? DateTime.tryParse(response['birthday']) : null;
+          _gender = response['gender'] ?? 'Male';
+          _userType = response['user_type'] ?? 'Customer';
+          _existingAvatarUrl = response['avatar_url'];
+          _isLoading = false;
+        });
+      } else {
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      debugPrint("Error loading profile: $e");
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -49,7 +100,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
   Future<void> _selectDate() async {
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: DateTime(2000),
+      initialDate: _selectedDate ?? DateTime(2000),
       firstDate: DateTime(1900),
       lastDate: DateTime.now(),
       builder: (context, child) => Theme(
@@ -64,7 +115,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
         child: child!,
       ),
     );
-    if (picked != null) {
+    if (picked != null && mounted) {
       setState(() => _selectedDate = picked);
     }
   }
@@ -77,48 +128,77 @@ class _FillProfilePageState extends State<FillProfilePage> {
       return;
     }
 
+    setState(() => _isLoading = true);
+
     final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      setState(() => _isLoading = false);
+      return;
+    }
 
     try {
+      String? avatarUrl = _existingAvatarUrl;
+
+      // Upload new profile picture if selected
+      if (_profileImage != null) {
+        final fileExt = _profileImage!.path.split('.').last;
+        final fileName = '${user.id}/${DateTime.now().millisecondsSinceEpoch}.$fileExt';
+
+        await Supabase.instance.client.storage.from('avatars').upload(fileName, _profileImage!);
+        avatarUrl = Supabase.instance.client.storage.from('avatars').getPublicUrl(fileName);
+      }
+
       await Supabase.instance.client.from('profiles').upsert({
         'id': user.id,
         'full_name': _fullNameCtrl.text.trim(),
         'username': _usernameCtrl.text.trim(),
         'birthday': _selectedDate?.toIso8601String(),
-        'phone': _fullPhoneNumber,
+        'phone': _fullPhoneNumber ?? _existingPhone,
         'gender': _gender,
         'user_type': _userType,
+       // 'avatar_url': avatarUrl, // NEW: save profile picture URL
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Profile saved!")),
-      );
-
-      if (!mounted) return;
-
-      if (_userType == 'Barber') {
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => const BarberShopDetailsPage()),
-              (route) => false,
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(widget.isEditMode ? "Profile updated successfully!" : "Profile saved!"),
+            backgroundColor: Colors.green,
+          ),
         );
-      } else {
-        Navigator.pushAndRemoveUntil(
-          context,
-          MaterialPageRoute(builder: (_) => const HomePage()),
-              (route) => false,
-        );
+
+        if (widget.isEditMode) {
+          // In edit mode → go back
+          Navigator.pop(context);
+        } else {
+          // First time → go to home or barber setup
+          if (_userType == 'Barber') {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (_) => const BarberShopDetailsPage()),
+                  (route) => false,
+            );
+          } else {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (_) => const HomePage()),
+                  (route) => false,
+            );
+          }
+        }
       }
     } catch (e) {
-      if(mounted) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Error: $e")),
         );
       }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -126,19 +206,14 @@ class _FillProfilePageState extends State<FillProfilePage> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        leading: IconButton(
+        leading: widget.isEditMode
+            ? IconButton(
           icon: const Icon(Icons.arrow_back_ios, color: Colors.black),
-          onPressed: () {
-            Navigator.pushAndRemoveUntil(
-              context,
-              MaterialPageRoute(builder: (_) => const LoginPage()),
-                  (route) => false,
-            );
-          },
-
-        ),
+          onPressed: () => Navigator.pop(context),
+        )
+            : null, // No back button in first-time mode
         title: Text(
-          "Fill Your Profile",
+          widget.isEditMode ? "Edit Profile" : "Fill Your Profile",
           style: GoogleFonts.poppins(
             fontSize: 20,
             fontWeight: FontWeight.bold,
@@ -146,7 +221,9 @@ class _FillProfilePageState extends State<FillProfilePage> {
           ),
         ),
       ),
-      body: SingleChildScrollView(
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: Colors.orange))
+          : SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           children: [
@@ -159,11 +236,12 @@ class _FillProfilePageState extends State<FillProfilePage> {
                   radius: 60,
                   backgroundImage: _profileImage != null
                       ? FileImage(_profileImage!)
-                      : const AssetImage('assets/avatar_placeholder.png')
-                  as ImageProvider,
+                      : (_existingAvatarUrl != null
+                      ? NetworkImage(_existingAvatarUrl!)
+                      : const AssetImage('assets/avatar_placeholder.png') as ImageProvider),
                   backgroundColor: Colors.grey[200],
-                  child: _profileImage == null
-                      ? Icon(Icons.person, size: 70, color: Colors.grey[400])
+                  child: _profileImage == null && _existingAvatarUrl == null
+                      ? const Icon(Icons.person, size: 70, color: Colors.grey)
                       : null,
                 ),
                 Positioned(
@@ -198,7 +276,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
             _buildDateField(),
             const SizedBox(height: 16),
 
-            // Email (disabled)
+            // Email (always disabled)
             _buildTextField(_emailCtrl, "Email", enabled: false),
             const SizedBox(height: 16),
 
@@ -210,16 +288,19 @@ class _FillProfilePageState extends State<FillProfilePage> {
             _buildGenderDropdown(),
             const SizedBox(height: 16),
 
-            // User Type (Customer or Barber)
-            _buildUserTypeDropdown(),
-            const SizedBox(height: 60),
+            // User Type (only show in first-time signup, or allow change in edit?)
+            // You can decide: hide in edit mode or keep it
+            if (!widget.isEditMode) ...[
+              _buildUserTypeDropdown(),
+              const SizedBox(height: 16),
+            ],
 
-            // Save Button
+            // Save / Update Button
             SizedBox(
               width: double.infinity,
               height: 60,
               child: ElevatedButton(
-                onPressed: _saveProfile,
+                onPressed: _isLoading ? null : _saveProfile,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFFF6B00),
                   elevation: 10,
@@ -229,7 +310,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
                   ),
                 ),
                 child: Text(
-                  "Continue",
+                  widget.isEditMode ? "Update Profile" : "Continue",
                   style: GoogleFonts.poppins(
                     fontSize: 18,
                     fontWeight: FontWeight.w600,
@@ -246,8 +327,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
   }
 
   // Reusable Text Field
-  Widget _buildTextField(TextEditingController controller, String hint,
-      {bool enabled = true}) {
+  Widget _buildTextField(TextEditingController controller, String hint, {bool enabled = true}) {
     return TextField(
       controller: controller,
       enabled: enabled,
@@ -261,8 +341,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide.none,
         ),
-        contentPadding:
-        const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
       ),
     );
   }
@@ -282,7 +361,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
             Text(
               _selectedDate == null
                   ? "Birthday"
-                  : DateFormat('MM/dd/yyyy').format(_selectedDate!),
+                  : DateFormat('dd/MM/yyyy').format(_selectedDate!),
               style: TextStyle(
                 color: _selectedDate == null ? Colors.black38 : Colors.black,
                 fontSize: 16,
@@ -298,6 +377,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
 
   Widget _buildPhoneField() {
     return IntlPhoneField(
+      initialValue: _existingPhone?.replaceAll('+', ''),
       style: const TextStyle(color: Colors.black),
       decoration: InputDecoration(
         labelText: 'Phone Number',
@@ -317,7 +397,6 @@ class _FillProfilePageState extends State<FillProfilePage> {
       dropdownIcon: const Icon(Icons.arrow_drop_down, color: Colors.black),
     );
   }
-
 
   // Gender Dropdown
   Widget _buildGenderDropdown() {
@@ -341,7 +420,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
     );
   }
 
-  // User Type Dropdown (Customer or Barber)
+  // User Type Dropdown (only shown in first-time signup)
   Widget _buildUserTypeDropdown() {
     return DropdownButtonFormField<String>(
       value: _userType,
