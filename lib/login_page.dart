@@ -2,12 +2,76 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:google_sign_in/google_sign_in.dart'; // REQUIRED for Native Login
+
 import 'signin_page.dart';
 import 'signup_page.dart';
-import 'fill_profile_page.dart';
 
-class LoginPage extends StatelessWidget {
+class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+
+  // ---------------------------------------------------------
+  // 👇 REPLACE THIS WITH YOUR ACTUAL WEB CLIENT ID FROM GOOGLE CLOUD
+  // It looks like: "123456789-abcde...apps.googleusercontent.com"
+  static const String _webClientId = '294768462523-ijkd535a5g4q86sfg7eg9q43i65g9sv6.apps.googleusercontent.com';
+  // ---------------------------------------------------------
+
+  bool _isLoading = false;
+
+  Future<void> _googleSignIn() async {
+    setState(() => _isLoading = true);
+
+    try {
+      // 1. Setup Google Sign In
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        serverClientId: _webClientId,
+      );
+      await googleSignIn.signOut();
+
+      // 2. Open the Native Android Dialog
+      final googleUser = await googleSignIn.signIn();
+      final googleAuth = await googleUser?.authentication;
+
+      if (googleAuth == null) {
+        // User cancelled the login
+        setState(() => _isLoading = false);
+        return;
+      }
+
+      final accessToken = googleAuth.accessToken;
+      final idToken = googleAuth.idToken;
+
+      if (idToken == null) {
+        throw 'No ID Token found.';
+      }
+
+      // 3. Send tokens to Supabase
+      await Supabase.instance.client.auth.signInWithIdToken(
+        provider: OAuthProvider.google,
+        idToken: idToken,
+        accessToken: accessToken,
+      );
+
+      // 4. Success! The AuthWrapper in main.dart will handle the navigation.
+
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Login Failed: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      setState(() => _isLoading = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -22,9 +86,9 @@ class LoginPage extends StatelessWidget {
 
               // Illustration
               Image.asset(
-                'assets/images/lets_you_in.png',  // Your local image file
+                'assets/app_icon.png',
                 height: 240,
-                fit: BoxFit.contain,  // Keeps aspect ratio like your screenshot
+                fit: BoxFit.contain,
                 errorBuilder: (context, error, stackTrace) => const Icon(
                   Icons.image_not_supported,
                   size: 240,
@@ -45,25 +109,30 @@ class LoginPage extends StatelessWidget {
 
               const Spacer(flex: 2),
 
-              // Facebook
-              _SocialButton(
-                icon: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/facebook.svg',
-                color: const Color(0xFF1877F2),
-                text: 'Continue with Facebook',
-                onTap: () => Supabase.instance.client.auth.signInWithOAuth(OAuthProvider.facebook),
-              ),
+              // Loading Indicator override
+              if (_isLoading)
+                const CircularProgressIndicator(color: Color(0xFFFF6B00))
+              else
+                Column(
+                  children: [
+                    // Facebook (Optional - kept standard redirect for now)
+                    _SocialButton(
+                      icon: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/facebook.svg',
+                      color: const Color(0xFF1877F2),
+                      text: 'Continue with Facebook',
+                      onTap: () => Supabase.instance.client.auth.signInWithOAuth(OAuthProvider.facebook),
+                    ),
 
-              const SizedBox(height: 16),
+                    const SizedBox(height: 16),
 
-              // Google
-              _SocialButton(
-                icon: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/google.svg',
-                text: 'Continue with Google',
-                onTap: () async {
-                  await Supabase.instance.client.auth.signInWithOAuth(OAuthProvider.google);
-                },
-
-              ),
+                    // Google (NATIVE IMPLEMENTATION)
+                    _SocialButton(
+                      icon: 'https://cdn.jsdelivr.net/npm/simple-icons@v13/icons/google.svg',
+                      text: 'Continue with Google',
+                      onTap: _googleSignIn, // Calls our new native function
+                    ),
+                  ],
+                ),
 
               const SizedBox(height: 50),
               const Text("or", style: TextStyle(color: Colors.grey, fontSize: 16)),
@@ -137,7 +206,13 @@ class _SocialButton extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            SvgPicture.network(icon, height: 28, width: 28, colorFilter: color != null ? ColorFilter.mode(color!, BlendMode.srcIn) : null),
+            SvgPicture.network(
+              icon,
+              height: 28,
+              width: 28,
+              colorFilter: color != null ? ColorFilter.mode(color!, BlendMode.srcIn) : null,
+              placeholderBuilder: (BuildContext context) => const Icon(Icons.error), // Handles loading
+            ),
             const SizedBox(width: 16),
             Text(text, style: GoogleFonts.poppins(fontSize: 17, color: Colors.black)),
           ],

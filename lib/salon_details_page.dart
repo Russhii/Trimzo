@@ -27,7 +27,24 @@ class _SalonDetailsPageState extends State<SalonDetailsPage> {
     _fetchReviewsPreview();
   }
 
-  // Fetch only the top 3 latest reviews
+  // --- 1. SAFE IMAGE GETTER ---
+  // Retrieves all images safely as a List of Strings
+  List<String> get _allImages {
+    try {
+      final dynamic raw = widget.salon['image_urls'];
+      if (raw is List) {
+        return raw.map((e) => e.toString()).toList();
+      }
+    } catch (e) {
+      debugPrint("Error parsing image_urls: $e");
+    }
+    return [];
+  }
+
+  // Gets the main image (first one) or empty
+  String get _mainImage => _allImages.isNotEmpty ? _allImages.first : '';
+
+  // --- DATA FETCHING (Same as before) ---
   Future<void> _fetchReviewsPreview() async {
     try {
       final response = await Supabase.instance.client
@@ -36,124 +53,42 @@ class _SalonDetailsPageState extends State<SalonDetailsPage> {
           .eq('salon_id', widget.salon['id'])
           .order('created_at', ascending: false)
           .limit(3);
-
-      final data = List<Map<String, dynamic>>.from(response);
-
-      if (mounted) {
-        setState(() {
-          _reviews = data;
-          _isLoadingReviews = false;
-        });
-      }
+      if (mounted) setState(() { _reviews = List<Map<String, dynamic>>.from(response); _isLoadingReviews = false; });
     } catch (e) {
-      debugPrint("Error loading reviews: $e");
       if (mounted) setState(() => _isLoadingReviews = false);
     }
   }
 
-  // --- ACTION BUTTON LOGIC ---
-
+  // --- ACTIONS (Navigation, Call, Share) ---
   Future<void> _launchNavigation() async {
     final lat = widget.salon['latitude'];
     final lng = widget.salon['longitude'];
-
     if (lat == null || lng == null) {
       final address = widget.salon['address'] ?? '';
       if (address.isNotEmpty) {
-        final Uri queryUrl = Uri.parse(
-            "https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(address)}");
-        await launchUrl(queryUrl, mode: LaunchMode.externalApplication);
+        await launchUrl(Uri.parse("https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(address)}"), mode: LaunchMode.externalApplication);
       }
       return;
     }
-
-    final Uri googleMapsUrl = Uri.parse("google.navigation:q=$lat,$lng&mode=d");
-    if (await canLaunchUrl(googleMapsUrl)) {
-      await launchUrl(googleMapsUrl);
-    } else {
-      final webUrl = Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$lat,$lng");
-      await launchUrl(webUrl, mode: LaunchMode.externalApplication);
-    }
+    await launchUrl(Uri.parse("google.navigation:q=$lat,$lng&mode=d"), mode: LaunchMode.externalApplication);
   }
 
   Future<void> _callShop() async {
-    final dynamic phoneRaw = widget.salon['phone_number'] ?? widget.salon['phone'];
-    final String phone = (phoneRaw?.toString() ?? '').trim();
-
-    if (phone.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Phone number not available")),
-      );
-      return;
-    }
-
-    // Clean phone number (remove spaces, dashes, etc. if needed)
-    final cleanPhone = phone.replaceAll(RegExp(r'[\s\-\(\)]'), '');
-
-    final Uri telUri = Uri(scheme: 'tel', path: cleanPhone);
-
-    try {
-      if (await canLaunchUrl(telUri)) {
-        await launchUrl(telUri, mode: LaunchMode.externalApplication);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Cannot open phone dialer on this device")),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error calling: $e")),
-      );
+    final rawPhone = widget.salon['shop_phone']?.toString().replaceAll(RegExp(r'[^0-9]'), '');
+    if (rawPhone != null && rawPhone.length >= 7) {
+      await launchUrl(Uri(scheme: 'tel', path: rawPhone));
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Phone number not available")));
     }
   }
 
-  // Navigate to full reviews page
+  void _shareSalon() {
+    Share.share("Check out ${widget.salon['name']} on Salon App!");
+  }
+
   void _goToReviewsPage() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => SalonReviewsPage(
-          salonId: widget.salon['id'],
-          salonName: widget.salon['name'] ?? 'Salon',
-        ),
-      ),
-    ).then((_) {
-      // Optional: refresh preview reviews when coming back
-      _fetchReviewsPreview();
-    });
+    Navigator.push(context, MaterialPageRoute(builder: (_) => SalonReviewsPage(salonId: widget.salon['id'], salonName: widget.salon['name'] ?? 'Salon')));
   }
-
-  // Share salon details using share_plus
-  void _shareSalon() async {
-    final name = widget.salon['name'] ?? 'Salon';
-    final address = widget.salon['address'] ?? 'No address';
-    final phone = (widget.salon['phone_number'] ?? widget.salon['phone'] ?? '').toString().trim();
-    final rating = widget.salon['rating']?.toString() ?? 'N/A';
-
-    final shareText = '''
-Check out $name!
-⭐ $rating
-📍 $address
-📞 $phone
-
-Book now via our app!
-    '''.trim();
-
-    try {
-      await Share.share(
-        shareText,
-        subject: 'Discover this amazing salon!',
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Couldn't share: $e")),
-        );
-      }
-    }
-  }
-
-  // --- BOOKING POPUP LOGIC ---
 
   void _showBookingSheet(BuildContext context) {
     showModalBottomSheet(
@@ -164,224 +99,127 @@ Book now via our app!
     );
   }
 
-  // FIXED: Safe Image Getter
-  String get _displayImage {
-    final dynamic images = widget.salon['image_urls'];
-    if (images is List && images.isNotEmpty) {
-      return images.first.toString();
-    }
-    return ''; // Return empty string if no image exists
-  }
-
+  // --- UI BUILD ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
       body: CustomScrollView(
         slivers: [
+          // 1. HEADER IMAGE
           SliverAppBar(
             expandedHeight: 250.0,
             pinned: true,
             backgroundColor: Colors.white,
-            elevation: 0,
-            leading: Container(
-              margin: const EdgeInsets.all(8),
-              decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-              child: IconButton(
-                icon: const Icon(Icons.arrow_back, color: Colors.black),
-                onPressed: () => Navigator.pop(context),
-              ),
+            leading: CircleAvatar(
+              backgroundColor: Colors.white,
+              child: IconButton(icon: const Icon(Icons.arrow_back, color: Colors.black), onPressed: () => Navigator.pop(context)),
             ),
             actions: [
-              Container(
-                margin: const EdgeInsets.all(8),
-                decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-                child: IconButton(
-                  icon: const Icon(Icons.share, color: Colors.black),
-                  onPressed: _shareSalon,
-                ),
+              CircleAvatar(
+                backgroundColor: Colors.white,
+                child: IconButton(icon: const Icon(Icons.share, color: Colors.black), onPressed: _shareSalon),
               ),
+              const SizedBox(width: 10),
             ],
             flexibleSpace: FlexibleSpaceBar(
-              background: _displayImage.isNotEmpty
+              background: _mainImage.isNotEmpty
                   ? Image.network(
-                _displayImage,
+                _mainImage,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                    color: Colors.grey[200],
-                    child: const Icon(Icons.store, size: 60, color: Colors.grey)),
+                errorBuilder: (_, __, ___) => Container(color: Colors.grey[200], child: const Icon(Icons.broken_image, size: 50, color: Colors.grey)),
               )
-                  : Container(
-                  color: Colors.grey[200],
-                  child: const Icon(Icons.store, size: 60, color: Colors.grey)),
+                  : Container(color: Colors.grey[200], child: const Icon(Icons.store, size: 60, color: Colors.grey)),
             ),
           ),
+
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Title & Rating
-                  Text(widget.salon['name'] ?? 'Unknown Salon',
-                      style: GoogleFonts.poppins(
-                          fontSize: 24, fontWeight: FontWeight.w600, color: Colors.black87)),
+                  // Title & Details
+                  Text(widget.salon['name'] ?? 'Unknown Salon', style: GoogleFonts.poppins(fontSize: 24, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      const Icon(Icons.star, color: Colors.amber, size: 18),
-                      const SizedBox(width: 4),
-                      Text("${widget.salon['rating'] ?? '4.5'}",
-                          style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text("•  ${widget.salon['address'] ?? 'No Address'}",
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 13)),
-                      ),
-                    ],
-                  ),
+                  Row(children: [
+                    const Icon(Icons.star, color: Colors.amber, size: 18),
+                    Text(" ${widget.salon['rating'] ?? 'New'}", style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(widget.salon['address'] ?? 'No Address', maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(color: Colors.grey[600]))),
+                  ]),
+
                   const SizedBox(height: 24),
 
                   // Action Buttons
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _buildActionButton(Icons.directions, "Directions", true, _launchNavigation),
-                      _buildActionButton(Icons.call, "Call", false, _callShop),
-                      _buildActionButton(Icons.star_outline, "Reviews", false, _goToReviewsPage),
-                      _buildActionButton(Icons.share, "Share", false, _shareSalon),
-                    ],
-                  ),
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+                    _buildActionButton(Icons.directions, "Directions", true, _launchNavigation),
+                    _buildActionButton(Icons.call, "Call", false, _callShop),
+                    _buildActionButton(Icons.star_outline, "Reviews", false, _goToReviewsPage),
+                    _buildActionButton(Icons.share, "Share", false, _shareSalon),
+                  ]),
+
                   const Divider(height: 40),
 
                   // About Section
-                  Text("About",
-                      style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                  Text("About", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
-                  Text(
-                      "Experience world-class grooming services at ${widget.salon['name']}. We offer haircuts, shaving, spa treatments and more.",
-                      style: GoogleFonts.poppins(color: Colors.grey[600], height: 1.5)),
-                  const Divider(height: 40),
+                  Text(widget.salon['description'] ?? "No description available.", style: GoogleFonts.poppins(color: Colors.grey[600], height: 1.5)),
 
-                  // --- REVIEWS SECTION START ---
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text("Reviews",
-                          style:
-                          GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
-                      TextButton(
-                        onPressed: _goToReviewsPage,
-                        child: Text("See All",
-                            style: GoogleFonts.poppins(
-                                color: Colors.orange, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 24),
+
+                  // --- NEW: PHOTOS GALLERY SECTION ---
+                  if (_allImages.isNotEmpty) ...[
+                    Text("Photos (${_allImages.length})", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 120,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _allImages.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 12),
+                        itemBuilder: (context, index) {
+                          return GestureDetector(
+                            onTap: () {
+                              // Optional: Add a Full Screen Image Viewer here
+                              showDialog(context: context, builder: (_) => Dialog(child: Image.network(_allImages[index])));
+                            },
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.network(
+                                _allImages[index],
+                                width: 120,
+                                height: 120,
+                                fit: BoxFit.cover,
+                                loadingBuilder: (context, child, loadingProgress) {
+                                  if (loadingProgress == null) return child;
+                                  return Container(width: 120, color: Colors.grey[100], child: const Center(child: CircularProgressIndicator(strokeWidth: 2)));
+                                },
+                                errorBuilder: (_, __, ___) => Container(width: 120, color: Colors.grey[200], child: const Icon(Icons.broken_image, color: Colors.grey)),
+                              ),
+                            ),
+                          );
+                        },
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
+                    ),
+                    const Divider(height: 40),
+                  ],
+                  // -----------------------------------
+
+                  // Reviews Preview
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                    Text("Reviews", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold)),
+                    TextButton(onPressed: _goToReviewsPage, child: Text("See All", style: GoogleFonts.poppins(color: Colors.orange, fontWeight: FontWeight.w600))),
+                  ]),
 
                   if (_isLoadingReviews)
-                    const Center(child: CircularProgressIndicator(color: Colors.orange))
+                    const Center(child: CircularProgressIndicator())
                   else if (_reviews.isEmpty)
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[50],
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Column(
-                        children: [
-                          Icon(Icons.rate_review_outlined, color: Colors.grey[400], size: 40),
-                          const SizedBox(height: 8),
-                          Text("No reviews yet", style: GoogleFonts.poppins(color: Colors.grey)),
-                        ],
-                      ),
-                    )
+                    const Text("No reviews yet.")
                   else
-                    Column(
-                      children: _reviews.map((review) {
-                        final profile = review['profiles'] ?? {};
-                        final name = profile['full_name'] ?? 'Anonymous';
-                        final date = DateTime.parse(review['created_at']);
-                        final rating = review['rating'] as int;
+                    ..._reviews.map((r) => _buildReviewCard(r)),
 
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 16),
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: Colors.grey[100]!),
-                            boxShadow: [
-                              BoxShadow(
-                                  color: Colors.black.withOpacity(0.02),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 4))
-                            ],
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  CircleAvatar(
-                                    radius: 16,
-                                    backgroundColor: Colors.orange.withOpacity(0.1),
-                                    child: Text(name[0].toUpperCase(),
-                                        style: GoogleFonts.poppins(
-                                            color: Colors.orange, fontWeight: FontWeight.bold)),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(name,
-                                            style: GoogleFonts.poppins(
-                                                fontWeight: FontWeight.w600, fontSize: 14)),
-                                        Text(DateFormat('MMM d, yyyy').format(date),
-                                            style: GoogleFonts.poppins(
-                                                fontSize: 11, color: Colors.grey)),
-                                      ],
-                                    ),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                    decoration: BoxDecoration(
-                                        color: Colors.green[50],
-                                        borderRadius: BorderRadius.circular(6)),
-                                    child: Row(
-                                      children: [
-                                        Text("$rating",
-                                            style: GoogleFonts.poppins(
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.green,
-                                                fontSize: 12)),
-                                        const Icon(Icons.star, size: 12, color: Colors.green),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              if (review['comment'] != null && review['comment'].isNotEmpty) ...[
-                                const SizedBox(height: 10),
-                                Text(
-                                  review['comment'],
-                                  style: GoogleFonts.poppins(color: Colors.black87, fontSize: 13, height: 1.4),
-                                  maxLines: 3,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ]
-                            ],
-                          ),
-                        );
-                      }).toList(),
-                    ),
-
-                  const SizedBox(height: 100), // Space for bottom button
+                  const SizedBox(height: 100),
                 ],
               ),
             ),
@@ -390,47 +228,43 @@ Book now via our app!
       ),
       bottomNavigationBar: Container(
         padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, -4))
-          ],
-        ),
+        decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -4))]),
         child: ElevatedButton(
           onPressed: () => _showBookingSheet(context),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.black,
-            padding: const EdgeInsets.symmetric(vertical: 18),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          ),
-          child: Text("Book Appointment",
-              style: GoogleFonts.poppins(
-                  fontWeight: FontWeight.w600, color: Colors.white, fontSize: 16)),
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 18), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
+          child: Text("Book Appointment", style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: Colors.white, fontSize: 16)),
         ),
       ),
     );
   }
 
+  // Helper Widgets
   Widget _buildActionButton(IconData icon, String label, bool isPrimary, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: isPrimary ? Colors.blue[50] : Colors.grey[50],
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: isPrimary ? Colors.blue : Colors.black87, size: 24),
-          ),
-          const SizedBox(height: 8),
-          Text(label, style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500)),
-        ],
-      ),
+      child: Column(children: [
+        Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: isPrimary ? Colors.blue[50] : Colors.grey[50], shape: BoxShape.circle), child: Icon(icon, color: isPrimary ? Colors.blue : Colors.black87, size: 24)),
+        const SizedBox(height: 8),
+        Text(label, style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w500)),
+      ]),
+    );
+  }
+
+  Widget _buildReviewCard(Map<String, dynamic> review) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey[100]!)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Text(review['profiles']?['full_name'] ?? 'User', style: const TextStyle(fontWeight: FontWeight.bold)),
+          const Spacer(),
+          const Icon(Icons.star, size: 14, color: Colors.orange),
+          Text(" ${review['rating']}"),
+        ]),
+        const SizedBox(height: 6),
+        Text(review['comment'] ?? '', style: const TextStyle(fontSize: 13, color: Colors.black87)),
+      ]),
     );
   }
 }

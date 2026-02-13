@@ -44,29 +44,41 @@ class _InboxPageState extends State<InboxPage> {
         value: userId,
       ),
       callback: (payload) {
-        if (mounted) {
+        if (mounted) { // Add this check
           setState(() {
             _messagesFuture = _fetchMessages();
           });
         }
       },
-    ).subscribe();
+    ).subscribe((status, error) {
+      if (error != null) {
+        debugPrint('Subscription error: $error');
+      }
+    }); // Add subscribe callback for errors
   }
 
   Future<List<Map<String, dynamic>>> _fetchMessages() async {
     final userId = Supabase.instance.client.auth.currentUser?.id;
-    if (userId == null) return [];
+    if (userId == null) {
+      debugPrint('No user ID found for fetching messages');
+      return []; // Return empty if no user
+    }
 
     try {
       final response = await Supabase.instance.client
           .from('inbox_messages')
-          .select('*, barber_shops(name)') 
+          .select('*, barber_shops(name)')
           .eq('user_id', userId)
           .order('created_at', ascending: false);
 
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       debugPrint('Error fetching messages: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading messages: $e')),
+        );
+      }
       return [];
     }
   }
@@ -163,7 +175,13 @@ class _InboxPageState extends State<InboxPage> {
           const SizedBox(width: 8),
         ],
       ),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
+        body: RefreshIndicator( // Add this
+          onRefresh: () async {
+            setState(() {
+              _messagesFuture = _fetchMessages();
+            });
+          },
+      child: FutureBuilder<List<Map<String, dynamic>>>(
         future: _messagesFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -320,6 +338,7 @@ class _InboxPageState extends State<InboxPage> {
           );
         },
       ),
+        ),
     );
   }
 }

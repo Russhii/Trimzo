@@ -1,4 +1,3 @@
-// lib/fill_profile_page.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -6,16 +5,17 @@ import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl_phone_field/intl_phone_field.dart';
+// Make sure these imports exist in your project
 import 'home_page.dart';
 import 'login_page.dart';
 import 'barber_shop_details_page.dart';
 
 class FillProfilePage extends StatefulWidget {
-  final bool isEditMode; // NEW: true = edit existing profile, false = first-time setup
+  final bool isEditMode;
 
   const FillProfilePage({
     super.key,
-    this.isEditMode = false, // default: first-time signup
+    this.isEditMode = false,
   });
 
   @override
@@ -26,16 +26,18 @@ class _FillProfilePageState extends State<FillProfilePage> {
   final _fullNameCtrl = TextEditingController();
   final _usernameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
+
   String? _fullPhoneNumber;
-  String? _existingPhone; // NEW
-  String? _existingAvatarUrl; // NEW: for displaying current photo
+  String? _existingPhone;
+  String? _existingAvatarUrl;
 
   DateTime? _selectedDate;
   String _gender = 'Male';
   String _userType = 'Customer';
   File? _profileImage;
 
-  bool _isLoading = false; // NEW: for loading existing data in edit mode
+  bool _isLoading = false;
+  bool _phoneError = false;
 
   final picker = ImagePicker();
 
@@ -48,7 +50,6 @@ class _FillProfilePageState extends State<FillProfilePage> {
       _emailCtrl.text = user!.email!;
     }
 
-    // If edit mode → load existing profile data
     if (widget.isEditMode) {
       _loadExistingProfile();
     }
@@ -120,10 +121,40 @@ class _FillProfilePageState extends State<FillProfilePage> {
     }
   }
 
+  // Validate Indian mobile number (10 digits, starts with 6-9)
+  bool _isValidIndianMobile(String? phone) {
+    if (phone == null || phone.isEmpty) return false;
+    String cleaned = phone.replaceAll(RegExp(r'^\+?91'), '').trim();
+    return RegExp(r'^[6-9]\d{9}$').hasMatch(cleaned);
+  }
+
   Future<void> _saveProfile() async {
+    setState(() => _phoneError = false);
+
+    // 1. Mandatory Text Fields Validation
     if (_fullNameCtrl.text.trim().isEmpty || _usernameCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Full Name and Username are required")),
+        const SnackBar(content: Text("Full Name and Username are mandatory")),
+      );
+      return;
+    }
+
+    // 2. Mandatory Birthday Validation
+    if (_selectedDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Birthday is mandatory")),
+      );
+      return;
+    }
+
+    // 3. Mandatory Phone Validation
+    if (_fullPhoneNumber == null || !_isValidIndianMobile(_fullPhoneNumber)) {
+      setState(() => _phoneError = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Please enter a valid 10-digit Indian mobile number"),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }
@@ -137,9 +168,11 @@ class _FillProfilePageState extends State<FillProfilePage> {
     }
 
     try {
+      // Start with existing avatar (if any), allow it to remain null
       String? avatarUrl = _existingAvatarUrl;
 
-      // Upload new profile picture if selected
+      // Only upload if a NEW image is selected.
+      // If _profileImage is null, we skip this and avatarUrl remains as is.
       if (_profileImage != null) {
         final fileExt = _profileImage!.path.split('.').last;
         final fileName = '${user.id}/${DateTime.now().millisecondsSinceEpoch}.$fileExt';
@@ -148,31 +181,30 @@ class _FillProfilePageState extends State<FillProfilePage> {
         avatarUrl = Supabase.instance.client.storage.from('avatars').getPublicUrl(fileName);
       }
 
+      // Upsert profile data
       await Supabase.instance.client.from('profiles').upsert({
         'id': user.id,
         'full_name': _fullNameCtrl.text.trim(),
         'username': _usernameCtrl.text.trim(),
-        'birthday': _selectedDate?.toIso8601String(),
-        'phone': _fullPhoneNumber ?? _existingPhone,
+        'birthday': _selectedDate!.toIso8601String(), // Safe to unwrap due to check above
+        'phone': _fullPhoneNumber,
         'gender': _gender,
         'user_type': _userType,
-       // 'avatar_url': avatarUrl, // NEW: save profile picture URL
+        'avatar_url': avatarUrl, // Can be null, that is okay
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(widget.isEditMode ? "Profile updated successfully!" : "Profile saved!"),
+            content: Text(widget.isEditMode ? "Profile updated!" : "Profile saved!"),
             backgroundColor: Colors.green,
           ),
         );
 
         if (widget.isEditMode) {
-          // In edit mode → go back
           Navigator.pop(context);
         } else {
-          // First time → go to home or barber setup
           if (_userType == 'Barber') {
             Navigator.pushAndRemoveUntil(
               context,
@@ -191,7 +223,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error: $e")),
+          SnackBar(content: Text("Error saving profile: $e")),
         );
       }
     } finally {
@@ -211,7 +243,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
           icon: const Icon(Icons.arrow_back_ios, color: Colors.black),
           onPressed: () => Navigator.pop(context),
         )
-            : null, // No back button in first-time mode
+            : null,
         title: Text(
           widget.isEditMode ? "Edit Profile" : "Fill Your Profile",
           style: GoogleFonts.poppins(
@@ -229,7 +261,7 @@ class _FillProfilePageState extends State<FillProfilePage> {
           children: [
             const SizedBox(height: 20),
 
-            // Profile Picture
+            // Profile Picture (Optional)
             Stack(
               children: [
                 CircleAvatar(
@@ -261,41 +293,67 @@ class _FillProfilePageState extends State<FillProfilePage> {
                 ),
               ],
             ),
+            const SizedBox(height: 8),
+            Text(
+              "(Optional)",
+              style: TextStyle(color: Colors.grey[500], fontSize: 12),
+            ),
 
-            const SizedBox(height: 40),
+            const SizedBox(height: 30),
 
-            // Full Name
-            _buildTextField(_fullNameCtrl, "Full Name"),
+            // Full Name *
+            _buildTextField(_fullNameCtrl, "Full Name *"),
             const SizedBox(height: 16),
 
-            // Username
-            _buildTextField(_usernameCtrl, "Username"),
+            // Username *
+            _buildTextField(_usernameCtrl, "Username *"),
             const SizedBox(height: 16),
 
-            // Birthday
+            // Birthday *
             _buildDateField(),
             const SizedBox(height: 16),
 
-            // Email (always disabled)
+            // Email (disabled)
             _buildTextField(_emailCtrl, "Email", enabled: false),
             const SizedBox(height: 16),
 
-            // Phone Number
-            _buildPhoneField(),
+            // Phone Number *
+            IntlPhoneField(
+              initialValue: _existingPhone?.replaceAll('+91', '').trim(),
+              style: const TextStyle(color: Colors.black),
+              decoration: InputDecoration(
+                labelText: 'Phone Number *',
+                labelStyle: const TextStyle(color: Colors.black54),
+                filled: true,
+                fillColor: Colors.grey[200],
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
+                errorText: _phoneError ? "Enter valid 10-digit Indian mobile number" : null,
+                errorStyle: const TextStyle(color: Colors.red),
+              ),
+              initialCountryCode: 'IN',
+              onChanged: (phone) {
+                _fullPhoneNumber = phone.completeNumber;
+                setState(() => _phoneError = false);
+              },
+              dropdownTextStyle: const TextStyle(color: Colors.black),
+              dropdownIcon: const Icon(Icons.arrow_drop_down, color: Colors.black),
+            ),
             const SizedBox(height: 16),
 
             // Gender
             _buildGenderDropdown(),
             const SizedBox(height: 16),
 
-            // User Type (only show in first-time signup, or allow change in edit?)
-            // You can decide: hide in edit mode or keep it
+            // User Type
             if (!widget.isEditMode) ...[
               _buildUserTypeDropdown(),
               const SizedBox(height: 16),
             ],
 
-            // Save / Update Button
+            // Save Button
             SizedBox(
               width: double.infinity,
               height: 60,
@@ -326,7 +384,6 @@ class _FillProfilePageState extends State<FillProfilePage> {
     );
   }
 
-  // Reusable Text Field
   Widget _buildTextField(TextEditingController controller, String hint, {bool enabled = true}) {
     return TextField(
       controller: controller,
@@ -346,7 +403,6 @@ class _FillProfilePageState extends State<FillProfilePage> {
     );
   }
 
-  // Date Field
   Widget _buildDateField() {
     return GestureDetector(
       onTap: _selectDate,
@@ -355,12 +411,15 @@ class _FillProfilePageState extends State<FillProfilePage> {
         decoration: BoxDecoration(
           color: Colors.grey[200],
           borderRadius: BorderRadius.circular(16),
+          border: _selectedDate == null
+              ? null
+              : Border.all(color: Colors.transparent), // Helper for debugging layout
         ),
         child: Row(
           children: [
             Text(
               _selectedDate == null
-                  ? "Birthday"
+                  ? "Birthday *" // Added asterisk
                   : DateFormat('dd/MM/yyyy').format(_selectedDate!),
               style: TextStyle(
                 color: _selectedDate == null ? Colors.black38 : Colors.black,
@@ -375,36 +434,13 @@ class _FillProfilePageState extends State<FillProfilePage> {
     );
   }
 
-  Widget _buildPhoneField() {
-    return IntlPhoneField(
-      initialValue: _existingPhone?.replaceAll('+', ''),
-      style: const TextStyle(color: Colors.black),
-      decoration: InputDecoration(
-        labelText: 'Phone Number',
-        labelStyle: const TextStyle(color: Colors.black38),
-        filled: true,
-        fillColor: Colors.grey[200],
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide.none,
-        ),
-      ),
-      initialCountryCode: 'IN',
-      onChanged: (phone) {
-        _fullPhoneNumber = phone.completeNumber;
-      },
-      dropdownTextStyle: const TextStyle(color: Colors.black),
-      dropdownIcon: const Icon(Icons.arrow_drop_down, color: Colors.black),
-    );
-  }
-
-  // Gender Dropdown
   Widget _buildGenderDropdown() {
     return DropdownButtonFormField<String>(
       value: _gender,
       dropdownColor: Colors.white,
       style: const TextStyle(color: Colors.black),
       decoration: InputDecoration(
+        labelText: "Gender", // Implicitly mandatory due to default value
         filled: true,
         fillColor: Colors.grey[200],
         border: OutlineInputBorder(
@@ -420,7 +456,6 @@ class _FillProfilePageState extends State<FillProfilePage> {
     );
   }
 
-  // User Type Dropdown (only shown in first-time signup)
   Widget _buildUserTypeDropdown() {
     return DropdownButtonFormField<String>(
       value: _userType,

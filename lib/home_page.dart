@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -23,7 +24,12 @@ class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
   late final PageController _pageController;
 
-  // --- FILTERS STATE ---
+  // Search state
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = "";
+  Timer? _debounce;
+
+  // Filters state
   String _selectedCategory = "All";
   final List<String> _categories = [
     "All",
@@ -34,21 +40,21 @@ class _HomePageState extends State<HomePage> {
     "Coloring"
   ];
 
-  // --- USER DATA ---
-  String? _userGender; // e.g. 'Male' or 'Female'
+  // User data
+  String? _userGender;
 
-  // --- MAP STATE ---
+  // Map state
   final MapController _mapController = MapController();
   LatLng _currentLocation = const LatLng(18.5204, 73.8567);
   List<Marker> _shopMarkers = [];
 
-  // --- SHEET STATE ---
+  // Sheet state
   final DraggableScrollableController _sheetController = DraggableScrollableController();
   double _sheetPosition = 0.15;
   final double _minSheetSize = 0.15;
   final double _maxSheetSize = 0.88;
 
-  // --- SUPABASE FUTURES ---
+  // Supabase futures
   late Future<List<Map<String, dynamic>>> _salonsFuture = Future.value([]);
 
   @override
@@ -56,7 +62,6 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _pageController = PageController();
 
-    // Initialize: Get Gender -> Then Get Data
     _initData();
 
     _sheetController.addListener(() {
@@ -64,16 +69,24 @@ class _HomePageState extends State<HomePage> {
         _sheetPosition = _sheetController.size;
       });
     });
+
+    // Optional: clear search when page is disposed
+    _searchController.addListener(() {
+      if (_searchController.text.isEmpty && _searchQuery.isNotEmpty) {
+        setState(() => _searchQuery = "");
+        _fetchSalons("");
+        _fetchShopMarkers();
+      }
+    });
   }
 
   Future<void> _initData() async {
     await _getCurrentLocation();
-    await _fetchUserGender(); // 1. Find out if user is Male or Female
-    _fetchSalons("All");      // 2. Fetch List (Filtered)
-    _fetchShopMarkers();      // 3. Fetch Map Pins (Filtered)
+    await _fetchUserGender();
+    _fetchSalons("");
+    _fetchShopMarkers();
   }
 
-  // --- 1. Fetch User Gender ---
   Future<void> _fetchUserGender() async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user != null) {
@@ -86,7 +99,6 @@ class _HomePageState extends State<HomePage> {
       if (response != null && response['gender'] != null) {
         setState(() {
           _userGender = response['gender'].toString();
-          // Ensure capital case matches DB (Male/Female)
           if (_userGender!.toLowerCase() == 'male') _userGender = 'Male';
           if (_userGender!.toLowerCase() == 'female') _userGender = 'Female';
         });
@@ -95,7 +107,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  // --- HELPER: Extract Image from DB Array ---
   String _getFirstImage(dynamic imageUrls) {
     if (imageUrls != null && imageUrls is List && imageUrls.isNotEmpty) {
       return imageUrls[0].toString();
@@ -103,45 +114,61 @@ class _HomePageState extends State<HomePage> {
     return '';
   }
 
-  // --- 2. Fetch Salons (Filtered by Gender) ---
-  void _fetchSalons(String category) {
-    // 1. Start with select()
-    var query = Supabase.instance.client
-        .from('barber_shops')
-        .select();
-
-    // 2. Apply Gender Filter (Must be BEFORE order/limit)
-    if (_userGender == 'Male') {
-      query = query.or('target_gender.eq.Male,target_gender.eq.Unisex');
-    } else if (_userGender == 'Female') {
-      query = query.or('target_gender.eq.Female,target_gender.eq.Unisex');
-    }
-
-    // 3. Apply Order and Limit at the end
-    // We assign it to a 'final' variable because the type changes here
-    final finalQuery = query.order('rating', ascending: false).limit(10);
-
-    setState(() {
-      _salonsFuture = finalQuery;
-    });
-  }
-
-  // --- 3. Fetch Map Markers (Filtered by Gender) ---
-  Future<void> _fetchShopMarkers() async {
+  Future<void> _fetchSalons(String search) async {
     try {
-      // 1. Start Query
-      var query = Supabase.instance.client.from('barber_shops').select(
-          'id, name, address, latitude, longitude, image_urls, rating, phone, target_gender');
+      var query = Supabase.instance.client
+          .from('barber_shops')
+          .select('*, shop_phone');  // ← include shop_phone explicitly
 
-      // 2. Apply Filter (BEFORE fetching)
+      // Gender filter
       if (_userGender == 'Male') {
         query = query.or('target_gender.eq.Male,target_gender.eq.Unisex');
       } else if (_userGender == 'Female') {
         query = query.or('target_gender.eq.Female,target_gender.eq.Unisex');
       }
 
-      // 3. Await the query directly
+      // Text search filter
+      if (search.trim().isNotEmpty) {
+        final searchPattern = '%${search.trim()}%';
+        query = query.or('name.ilike.$searchPattern,address.ilike.$searchPattern');
+      }
+
+      final finalQuery = query.order('rating', ascending: false).limit(20);
+
+      setState(() {
+        _salonsFuture = finalQuery;
+      });
+    } catch (e) {
+      debugPrint("Error fetching salons: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Failed to load salons: $e")),
+        );
+      }
+    }
+  }
+
+  Future<void> _fetchShopMarkers() async {
+    try {
+      var query = Supabase.instance.client
+          .from('barber_shops')
+          .select('id, name, address, latitude, longitude, image_urls, rating, shop_phone, target_gender');
+
+      // Gender filter
+      if (_userGender == 'Male') {
+        query = query.or('target_gender.eq.Male,target_gender.eq.Unisex');
+      } else if (_userGender == 'Female') {
+        query = query.or('target_gender.eq.Female,target_gender.eq.Unisex');
+      }
+
+      // Text search filter
+      if (_searchQuery.trim().isNotEmpty) {
+        final searchPattern = '%${_searchQuery.trim()}%';
+        query = query.or('name.ilike.$searchPattern,address.ilike.$searchPattern');
+      }
+
       final List<dynamic> data = await query;
+
       final List<Marker> markers = [];
 
       for (var shop in data) {
@@ -170,20 +197,42 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _getCurrentLocation() async {
-    // ... (Your existing geolocation code) ...
-    // Keeping this brief to save space, paste your original geolocation logic here
-    bool serviceEnabled;
-    LocationPermission permission;
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return;
-    permission = await Geolocator.checkPermission();
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Location services are disabled.')),
+        );
+      }
+      return;
+    }
+
+    LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) return;
+      if (permission == LocationPermission.denied) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Location permissions are denied')),
+          );
+        }
+        return;
+      }
     }
-    if (permission == LocationPermission.deniedForever) return;
+
+    if (permission == LocationPermission.deniedForever) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Location permissions are permanently denied')),
+        );
+      }
+      return;
+    }
+
     try {
-      final position = await Geolocator.getCurrentPosition();
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
       if (mounted) {
         setState(() {
           _currentLocation = LatLng(position.latitude, position.longitude);
@@ -191,7 +240,7 @@ class _HomePageState extends State<HomePage> {
         _mapController.move(_currentLocation, 15.0);
       }
     } catch (e) {
-      debugPrint("Error: $e");
+      debugPrint("Location error: $e");
     }
   }
 
@@ -204,6 +253,8 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    _searchController.dispose();
+    _debounce?.cancel();
     _pageController.dispose();
     _mapController.dispose();
     _sheetController.dispose();
@@ -229,11 +280,12 @@ class _HomePageState extends State<HomePage> {
       ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
-            color: Colors.white,
-            boxShadow: [
-              BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 20)
-            ],
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(30))),
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 20)
+          ],
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+        ),
         child: BottomNavigationBar(
           backgroundColor: Colors.transparent,
           elevation: 0,
@@ -262,7 +314,7 @@ class _HomePageState extends State<HomePage> {
 
     return Stack(
       children: [
-        // 1. MAP LAYER
+        // Map layer
         FlutterMap(
           mapController: _mapController,
           options: MapOptions(
@@ -278,36 +330,68 @@ class _HomePageState extends State<HomePage> {
             ),
             MarkerLayer(markers: [
               Marker(
-                  point: _currentLocation,
-                  width: 60, height: 60,
-                  child: _buildUserLocationPin()),
-              ..._shopMarkers, // Filtered Markers
+                point: _currentLocation,
+                width: 60,
+                height: 60,
+                child: _buildUserLocationPin(),
+              ),
+              ..._shopMarkers,
             ]),
           ],
         ),
 
-        // 2. SEARCH BAR & HEADER
+        // Search bar & header
         Positioned(
-          top: 0, left: 0, right: 0,
+          top: 0,
+          left: 0,
+          right: 0,
           child: SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               child: Container(
                 height: 50,
-                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(30), boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4))]),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(30),
+                  boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4))],
+                ),
                 child: TextField(
-                    decoration: InputDecoration(
-                        hintText: "Search salon...",
-                        hintStyle: const TextStyle(color: Colors.black38),
-                        prefixIcon: const Icon(Icons.search, color: Colors.orange),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14))),
+                  controller: _searchController,
+                  onChanged: (value) {
+                    if (_debounce?.isActive ?? false) _debounce?.cancel();
+                    _debounce = Timer(const Duration(milliseconds: 500), () {
+                      setState(() {
+                        _searchQuery = value.trim().toLowerCase();
+                      });
+                      _fetchSalons(_searchQuery);
+                      _fetchShopMarkers();
+                    });
+                  },
+                  decoration: InputDecoration(
+                    hintText: "Search salon, location...",
+                    hintStyle: const TextStyle(color: Colors.black38),
+                    prefixIcon: const Icon(Icons.search, color: Colors.orange),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                      icon: const Icon(Icons.clear, color: Colors.grey),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _searchQuery = "");
+                        _fetchSalons("");
+                        _fetchShopMarkers();
+                      },
+                    )
+                        : null,
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                  ),
+                ),
               ),
             ),
           ),
         ),
 
-        // 3. BOTTOM SHEET
+        // Bottom sheet
         DraggableScrollableSheet(
           controller: _sheetController,
           initialChildSize: _minSheetSize,
@@ -327,7 +411,14 @@ class _HomePageState extends State<HomePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Center(child: Container(width: 40, height: 4, margin: const EdgeInsets.only(bottom: 20), decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)))),
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: 20),
+                        decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+                      ),
+                    ),
 
                     // Welcome & Gender Badge
                     Padding(
@@ -338,9 +429,10 @@ class _HomePageState extends State<HomePage> {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text("Morning, ${user?.userMetadata?['full_name']?.split(' ').first ?? 'User'}!", style: GoogleFonts.poppins(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.black87)),
-
-                              // Show user which filter is active
+                              Text(
+                                "Morning, ${user?.userMetadata?['full_name']?.split(' ').first ?? 'User'}!",
+                                style: GoogleFonts.poppins(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.black87),
+                              ),
                               Row(
                                 children: [
                                   Text("Finding best salons for ", style: GoogleFonts.poppins(fontSize: 14, color: Colors.black54)),
@@ -349,13 +441,13 @@ class _HomePageState extends State<HomePage> {
                               ),
                             ],
                           ),
-                          const Icon(Icons.notifications_outlined, color: Colors.black)
+                          const Icon(Icons.notifications_outlined, color: Colors.black),
                         ],
                       ),
                     ),
                     const SizedBox(height: 24),
 
-                    // Filter Chips
+                    // Category filters
                     _buildCategoryFilters(),
 
                     const SizedBox(height: 24),
@@ -371,8 +463,12 @@ class _HomePageState extends State<HomePage> {
                       child: FutureBuilder<List<Map<String, dynamic>>>(
                         future: _salonsFuture,
                         builder: (context, snapshot) {
-                          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator(color: Colors.orange));
-                          if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text("No salons found"));
+                          if (snapshot.connectionState == ConnectionState.waiting) {
+                            return const Center(child: CircularProgressIndicator(color: Colors.orange));
+                          }
+                          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                            return const Center(child: Text("No top rated salons found"));
+                          }
 
                           final salons = snapshot.data!;
                           return ListView.separated(
@@ -388,14 +484,17 @@ class _HomePageState extends State<HomePage> {
 
                     const SizedBox(height: 24),
 
-                    // All Salons List
+                    // Near You Section
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text("Near You", style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.w600)),
-                          TextButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AllSalonsPage())), child: Text("See All", style: GoogleFonts.poppins(color: Colors.orange))),
+                          TextButton(
+                            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AllSalonsPage())),
+                            child: Text("See All", style: GoogleFonts.poppins(color: Colors.orange)),
+                          ),
                         ],
                       ),
                     ),
@@ -405,9 +504,31 @@ class _HomePageState extends State<HomePage> {
                       child: FutureBuilder<List<Map<String, dynamic>>>(
                         future: _salonsFuture,
                         builder: (context, snapshot) {
-                          if (!snapshot.hasData) return const SizedBox();
+                          if (snapshot.connectionState == ConnectionState.waiting) {
+                            return const Center(child: CircularProgressIndicator());
+                          }
+                          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                            return Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(20),
+                                child: Text(
+                                  _searchQuery.isEmpty
+                                      ? "No salons found near you"
+                                      : "No results for '$_searchQuery'",
+                                  style: GoogleFonts.poppins(fontSize: 16, color: Colors.grey[600]),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            );
+                          }
+
                           final salons = snapshot.data!;
-                          return Column(children: salons.map((salon) => Padding(padding: const EdgeInsets.only(bottom: 16), child: _salonCard(salon))).toList());
+                          return Column(
+                            children: salons.map((salon) => Padding(
+                              padding: const EdgeInsets.only(bottom: 16),
+                              child: _salonCard(salon),
+                            )).toList(),
+                          );
                         },
                       ),
                     ),
@@ -418,20 +539,24 @@ class _HomePageState extends State<HomePage> {
           },
         ),
 
-        // Location Button
+        // My location button
         Positioned(
-          bottom: sheetHeightPixels + 20, right: 20,
+          bottom: sheetHeightPixels + 20,
+          right: 20,
           child: AnimatedOpacity(
             duration: const Duration(milliseconds: 200),
             opacity: buttonOpacity,
-            child: FloatingActionButton(heroTag: "btn_loc", backgroundColor: Colors.white, onPressed: _getCurrentLocation, child: const Icon(Icons.my_location, color: Colors.black87)),
+            child: FloatingActionButton(
+              heroTag: "btn_loc",
+              backgroundColor: Colors.white,
+              onPressed: _getCurrentLocation,
+              child: const Icon(Icons.my_location, color: Colors.black87),
+            ),
           ),
         ),
       ],
     );
   }
-
-  // --- WIDGETS HELPERS (Same as before) ---
 
   Widget _buildCategoryFilters() {
     return SizedBox(
@@ -447,12 +572,25 @@ class _HomePageState extends State<HomePage> {
           return GestureDetector(
             onTap: () {
               setState(() => _selectedCategory = category);
-              _fetchSalons(category);
+              // You can extend this to filter by category if you have that logic
             },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              decoration: BoxDecoration(color: isSelected ? Colors.orange : Colors.grey[100], borderRadius: BorderRadius.circular(20), border: Border.all(color: isSelected ? Colors.orange : Colors.transparent)),
-              child: Center(child: Text(category, style: GoogleFonts.poppins(color: isSelected ? Colors.white : Colors.black87, fontWeight: FontWeight.w500, fontSize: 13))),
+              decoration: BoxDecoration(
+                color: isSelected ? Colors.orange : Colors.grey[100],
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: isSelected ? Colors.orange : Colors.transparent),
+              ),
+              child: Center(
+                child: Text(
+                  category,
+                  style: GoogleFonts.poppins(
+                    color: isSelected ? Colors.white : Colors.black87,
+                    fontWeight: FontWeight.w500,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
             ),
           );
         },
@@ -461,14 +599,25 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildCustomShopPin(String imageUrl) {
-    return Column(children: [
-      Container(
-        width: 45, height: 45,
-        decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, border: Border.all(color: Colors.orange, width: 2), image: imageUrl.isNotEmpty ? DecorationImage(image: NetworkImage(imageUrl), fit: BoxFit.cover) : null),
-        child: imageUrl.isEmpty ? const Icon(Icons.store, size: 24, color: Colors.orange) : null,
-      ),
-      ClipPath(clipper: _TriangleClipper(), child: Container(color: Colors.orange, width: 10, height: 8))
-    ]);
+    return Column(
+      children: [
+        Container(
+          width: 45,
+          height: 45,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.orange, width: 2),
+            image: imageUrl.isNotEmpty ? DecorationImage(image: NetworkImage(imageUrl), fit: BoxFit.cover) : null,
+          ),
+          child: imageUrl.isEmpty ? const Icon(Icons.store, size: 24, color: Colors.orange) : null,
+        ),
+        ClipPath(
+          clipper: _TriangleClipper(),
+          child: Container(color: Colors.orange, width: 10, height: 8),
+        )
+      ],
+    );
   }
 
   Widget _buildTopRatedCard(Map<String, dynamic> salon) {
@@ -477,15 +626,55 @@ class _HomePageState extends State<HomePage> {
       onTap: () => _navigateToDetails(salon),
       child: Container(
         width: 160,
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))], border: Border.all(color: Colors.grey[100]!)),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Expanded(child: ClipRRect(borderRadius: const BorderRadius.vertical(top: Radius.circular(16)), child: Image.network(img, width: double.infinity, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: Colors.grey[200], child: const Icon(Icons.spa, color: Colors.grey))))),
-          Padding(padding: const EdgeInsets.all(10), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(salon['name'], maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            Row(children: [const Icon(Icons.star, color: Colors.amber, size: 14), Text(" ${(salon['rating'] as num?)?.toDouble() ?? 0.0}", style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold))])
-          ]))
-        ]),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+          border: Border.all(color: Colors.grey[100]!),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+                child: Image.network(
+                  img,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    color: Colors.grey[200],
+                    child: const Icon(Icons.spa, color: Colors.grey),
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    salon['name'],
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(Icons.star, color: Colors.amber, size: 14),
+                      Text(
+                        " ${(salon['rating'] as num?)?.toDouble() ?? 0.0}",
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                      )
+                    ],
+                  )
+                ],
+              ),
+            )
+          ],
+        ),
       ),
     );
   }
@@ -496,26 +685,83 @@ class _HomePageState extends State<HomePage> {
       onTap: () => _navigateToDetails(salon),
       child: Container(
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.grey[200]!), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4))]),
-        child: Row(children: [
-          ClipRRect(borderRadius: BorderRadius.circular(16), child: Image.network(img, width: 90, height: 90, fit: BoxFit.cover, errorBuilder: (_, __, ___) => Container(color: Colors.grey[200], child: const Icon(Icons.spa, color: Colors.grey, size: 40)))),
-          const SizedBox(width: 16),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(salon['name'], style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 4),
-            Text(salon['address'] ?? '', style: const TextStyle(color: Colors.black54, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
-            const SizedBox(height: 8),
-            // Gender Badge
-            if (salon['target_gender'] != null)
-              Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(4)), child: Text(salon['target_gender'], style: TextStyle(fontSize: 10, color: Colors.blue[800], fontWeight: FontWeight.bold))),
-          ]))
-        ]),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.grey[200]!),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4))],
+        ),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Image.network(
+                img,
+                width: 90,
+                height: 90,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  color: Colors.grey[200],
+                  child: const Icon(Icons.spa, color: Colors.grey, size: 40),
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(salon['name'], style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  Text(
+                    salon['address'] ?? '',
+                    style: const TextStyle(color: Colors.black54, fontSize: 13),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 8),
+                  if (salon['target_gender'] != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.blue[50],
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        salon['target_gender'],
+                        style: TextStyle(fontSize: 10, color: Colors.blue[800], fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                ],
+              ),
+            )
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildUserLocationPin() {
-    return Stack(alignment: Alignment.center, children: [Container(width: 60, height: 60, decoration: BoxDecoration(color: Colors.blue.withOpacity(0.2), shape: BoxShape.circle)), Container(width: 20, height: 20, decoration: BoxDecoration(color: Colors.blue, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 3), boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 5)]))]);
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Container(
+          width: 60,
+          height: 60,
+          decoration: BoxDecoration(color: Colors.blue.withOpacity(0.2), shape: BoxShape.circle),
+        ),
+        Container(
+          width: 20,
+          height: 20,
+          decoration: BoxDecoration(
+            color: Colors.blue,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 3),
+            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 5)],
+          ),
+        )
+      ],
+    );
   }
 }
 
@@ -529,6 +775,7 @@ class _TriangleClipper extends CustomClipper<Path> {
     path.close();
     return path;
   }
+
   @override
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
